@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>droidpanel</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><img src="icon.svg" alt="" width="22" height="22"> droidpanel</div>
+  <div class="device-picker">
+    <span class="dot" id="devDot"></span>
+    <select id="deviceSelect" aria-label="Device"><option value="">No device</option></select>
+  </div>
+  <div class="top-actions">
+    <button id="connectBtn" class="btn">＋ Connect device</button>
+    <button id="themeBtn" class="btn icon" title="Toggle theme" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ── Mirror ── -->
+  <section class="card mirror-card">
+    <div class="mirror-bar">
+      <button id="mirrorBtn" class="btn primary">▶ Mirror</button>
+      <select id="mirrorQuality" title="Quality" aria-label="Mirror quality">
+        <option value="720,30,2">Lite · 720p 30fps</option>
+        <option value="1024,30,4" selected>Balanced · 1024p 30fps</option>
+        <option value="1600,60,8">Sharp · 1600p 60fps</option>
+      </select>
+      <span class="spacer"></span>
+      <button id="shotBtn" class="btn" title="Screenshot → clipboard (Ctrl+Shift+S)">📋 Screenshot</button>
+      <button id="shotSaveBtn" class="btn icon" title="Save screenshot as PNG" aria-label="Save screenshot">⤓</button>
+      <button id="recBtn" class="btn" title="Record screen (max 3 min)">⏺ Record</button>
+    </div>
+    <div class="stage" id="stage">
+      <canvas id="screen" tabindex="0"></canvas>
+      <div class="stage-msg" id="stageMsg">
+        <div class="phone-outline"></div>
+        <p>Pick a device, then press <b>Mirror</b>.</p>
+        <p class="muted small">Click = tap · drag = swipe · wheel = scroll · right-click = back · type to send keys · Ctrl+V pastes your clipboard</p>
+      </div>
+    </div>
+    <div class="nav-bar">
+      <button class="btn" data-key="4" title="Back">◁</button>
+      <button class="btn" data-key="3" title="Home">○</button>
+      <button class="btn" data-key="187" title="Recent apps">▢</button>
+      <span class="sep"></span>
+      <button class="btn" data-key="25" title="Volume down">🔉</button>
+      <button class="btn" data-key="24" title="Volume up">🔊</button>
+      <button class="btn" data-key="26" title="Power">⏻</button>
+      <button class="btn" id="notifBtn" title="Notification panel">⌄</button>
+      <button class="btn" id="rotateBtn" title="Rotate">⟳</button>
+    </div>
+    <div class="mirror-foot muted small" id="mirrorStats">—</div>
+  </section>
+
+  <!-- ── Work area ── -->
+  <section class="card work">
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="overview" class="active">Overview</button>
+      <button role="tab" data-tab="apps">Apps</button>
+      <button role="tab" data-tab="logcat">Logcat</button>
+      <button role="tab" data-tab="build">Build &amp; Run</button>
+      <button role="tab" data-tab="tools">Tools</button>
+    </nav>
+
+    <!-- Overview -->
+    <div class="panel active" data-panel="overview">
+      <div class="info-grid" id="infoGrid"><p class="muted">No device selected.</p></div>
+      <h3>Developer toggles</h3>
+      <div class="toggles" id="toggles"></div>
+      <h3>Port reverse <span class="muted small">— phone's localhost:PORT → this PC</span></h3>
+      <form class="row" id="reverseForm">
+        <input id="revRemote" inputmode="numeric" placeholder="Phone port, e.g. 4000" required>
+        <input id="revLocal" inputmode="numeric" placeholder="PC port (same)">
+        <button class="btn">Add</button>
+      </form>
+      <div class="chips" id="reverseList"></div>
+    </div>
+
+    <!-- Apps -->
+    <div class="panel" data-panel="apps">
+      <div class="row">
+        <input id="appSearch" type="search" placeholder="Search packages…">
+        <label class="check"><input type="checkbox" id="appAll"> System apps</label>
+        <button class="btn" id="appRefresh">↻</button>
+      </div>
+      <div class="drop" id="apkDrop">Drop an <b>.apk</b> here or <label class="link">browse<input type="file" id="apkInput" accept=".apk" hidden></label> to install</div>
+      <div class="apps-split">
+        <ul class="app-list" id="appList"></ul>
+        <div class="app-detail" id="appDetail"><p class="muted">Select an app.</p></div>
+      </div>
+    </div>
+
+    <!-- Logcat -->
+    <div class="panel" data-panel="logcat">
+      <div class="row wrap">
+        <input id="logPkg" list="pkgOptions" placeholder="Filter by app package (empty = all)">
+        <datalist id="pkgOptions"></datalist>
+        <select id="logLevel" aria-label="Minimum level">
+          <option value="V">Verbose</option><option value="D">Debug</option><option value="I">Info</option>
+          <option value="W">Warn</option><option value="E">Error</option>
+        </select>
+        <input id="logSearch" type="search" placeholder="Search / regex">
+      </div>
+      <div class="row">
+        <button class="btn primary" id="logToggle">▶ Start</button>
+        <button class="btn" id="logPause">Pause</button>
+        <button class="btn" id="logClear" title="Clear device log buffer and view">Clear</button>
+        <button class="btn" id="logSave">Save</button>
+        <span class="spacer"></span>
+        <span class="muted small" id="logCount">0 lines</span>
+      </div>
+      <div class="logcat" id="logView"></div>
+    </div>
+
+    <!-- Build & Run -->
+    <div class="panel" data-panel="build">
+      <form class="row" id="projectForm">
+        <input id="projectPath" placeholder="Project folder, e.g. ~/code/my_app (Flutter, Gradle or React Native)" required>
+        <button class="btn primary">Add project</button>
+      </form>
+      <div id="projects"></div>
+      <div class="job" id="jobBox" hidden>
+        <div class="row">
+          <b id="jobTitle"></b><span class="badge" id="jobStatus"></span>
+          <span class="spacer"></span>
+          <span id="hotKeys" hidden>
+            <button class="btn" data-hot="r" title="Hot reload">⚡ Reload</button>
+            <button class="btn" data-hot="R" title="Hot restart">↻ Restart</button>
+          </span>
+          <button class="btn danger" id="jobStop">■ Stop</button>
+        </div>
+        <pre class="console" id="jobLog"></pre>
+      </div>
+    </div>
+
+    <!-- Tools -->
+    <div class="panel" data-panel="tools">
+      <h3>Open deep link / URL</h3>
+      <form class="row" id="linkForm">
+        <input id="linkUrl" placeholder="myapp://product/42 or https://…" required>
+        <input id="linkPkg" list="pkgOptions" placeholder="Package (optional)">
+        <button class="btn">Open</button>
+      </form>
+      <h3>Type text on device</h3>
+      <form class="row" id="textForm">
+        <input id="textValue" placeholder="Sent to the focused field" required>
+        <button class="btn">Send</button>
+      </form>
+      <h3>Push file to Downloads</h3>
+      <div class="drop" id="fileDrop">Drop any file here or <label class="link">browse<input type="file" id="fileInput" hidden></label> → /sdcard/Download</div>
+      <h3>ADB shell</h3>
+      <form class="row" id="shellForm">
+        <input id="shellCmd" placeholder="e.g. dumpsys activity top | head -20" autocomplete="off" required>
+        <button class="btn">Run</button>
+      </form>
+      <pre class="console" id="shellOut"></pre>
+      <h3>Panel log</h3>
+      <pre class="console small-console" id="panelLog"></pre>
+    </div>
+  </section>
+</main>
+
+<!-- ── Connect dialog ── -->
+<dialog id="connectDialog">
+  <form method="dialog" class="dialog-head"><h2>Connect a device</h2><button class="btn icon" aria-label="Close">✕</button></form>
+  <nav class="tabs small-tabs">
+    <button data-ctab="usb" class="active">USB</button>
+    <button data-ctab="qr">Wi-Fi · QR</button>
+    <button data-ctab="code">Wi-Fi · Code</button>
+    <button data-ctab="ip">Wi-Fi · IP</button>
+  </nav>
+  <div class="cpanel active" data-cpanel="usb">
+    <ol>
+      <li>On the phone: <b>Settings → About phone</b>, tap <b>Build number</b> 7 times.</li>
+      <li>Open <b>Developer options</b> and enable <b>USB debugging</b>.</li>
+      <li>Plug in the cable and accept the <b>Allow USB debugging?</b> prompt.</li>
+    </ol>
+    <p>Already on USB? Switch it to Wi-Fi so you can unplug the cable:</p>
+    <button class="btn primary" id="usbToWifi">USB → Wi-Fi (selected device)</button>
+  </div>
+  <div class="cpanel" data-cpanel="qr">
+    <p>Android 11+: on the phone open <b>Developer options → Wireless debugging → Pair device with QR code</b> and scan this. Phone and PC must be on the same Wi-Fi.</p>
+    <div class="qr-box"><div id="qrCode"></div><p class="muted small" id="qrStatus"></p></div>
+    <button class="btn" id="qrNew">New QR code</button>
+  </div>
+  <div class="cpanel" data-cpanel="code">
+    <p>On the phone: <b>Wireless debugging → Pair device with pairing code</b>. Enter the IP:port and the 6-digit code it shows.</p>
+    <form class="row" id="pairForm">
+      <input id="pairHost" placeholder="192.168.1.20:37123" required>
+      <input id="pairCode" placeholder="123456" inputmode="numeric" required>
+      <button class="btn primary">Pair</button>
+    </form>
+    <p class="muted small">After pairing, connect using the IP:port shown on the main <b>Wireless debugging</b> screen (it's a different port).</p>
+    <div id="mdnsList"></div>
+  </div>
+  <div class="cpanel" data-cpanel="ip">
+    <p>Connect to a paired device, or one that ran <code>adb tcpip 5555</code>.</p>
+    <form class="row" id="ipForm">
+      <input id="ipHost" placeholder="192.168.1.20:5555" required>
+      <button class="btn primary">Connect</button>
+    </form>
+    <h3>Connected over Wi-Fi</h3>
+    <div id="wifiDevices" class="chips"></div>
+  </div>
+  <pre class="console small-console" id="connectOut" hidden></pre>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

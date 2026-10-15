@@ -1,0 +1,32 @@
+{
+  "name": "droidpanel",
+  "version": "0.1.0",
+  "description": "A lightweight, zero-dependency web dashboard for Android app developers: mirror, screenshots, logcat, wireless ADB, app manager and one-click build/install.",
+  "type": "module",
+  "bin": {
+    "droidpanel": "bin/droidpanel.mjs"
+  },
+  "scripts": {
+    "start": "node bin/droidpanel.mjs",
+    "dev": "node --watch-path=src --watch-path=public bin/droidpanel.mjs --no-open",
+    "check": "node --check bin/droidpanel.mjs && for f in src/*.mjs public/*.js; do node --check $f || exit 1; done"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "adb",
+    "android",
+    "scrcpy",
+    "logcat",
+    "flutter",
+    "developer-tools",
+    "screen-mirror"
+  ],
+  "license": "MIT"
+}
