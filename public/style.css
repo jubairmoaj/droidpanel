@@ -157,6 +157,29 @@ input:focus, select:focus, .btn:focus-visible, canvas:focus-visible { outline: 2
 .l-V { color: #8b949e; } .l-D { color: #79c0ff; } .l-I { color: #7ee787; } .l-W { color: #e3b341; } .l-E, .l-F { color: #ff7b72; }
 .logcat mark { background: #e3b34155; color: inherit; }
 
+/* ── Network ── */
+.net-help { border: 1px solid var(--line); border-radius: 8px; padding: 4px 14px 12px; margin-bottom: 12px; font-size: 13px; }
+.net-help a { color: var(--accent); }
+.net-help .console { min-height: 0; }
+.net-split { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.net-split.open { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+@media (max-width: 1200px) { .net-split.open { grid-template-columns: 1fr; } }
+.net-list { border: 1px solid var(--line); border-radius: 8px; max-height: calc(100vh - 300px); min-height: 200px; overflow: auto; }
+.net-empty { padding: 16px; margin: 0; }
+.net-row { display: grid; grid-template-columns: 50px 62px minmax(0, 1fr) 70px 60px; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); cursor: pointer; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.net-row:hover { background: var(--hover); }
+.net-row.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.net-row .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.net-row .host { color: var(--muted); }
+.net-row .num { text-align: right; color: var(--muted); }
+.st { font-weight: 700; } .st-2 { color: var(--c-green); } .st-3 { color: var(--c-blue); } .st-4 { color: var(--c-amber); } .st-5, .st-err { color: var(--c-red); } .st-pending { color: var(--muted); }
+.m { font-weight: 700; } .m-GET { color: var(--c-blue); } .m-POST { color: var(--c-green); } .m-PUT, .m-PATCH { color: var(--c-amber); } .m-DELETE { color: var(--c-red); }
+.net-detail { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; max-height: calc(100vh - 300px); overflow: auto; min-width: 0; }
+.net-detail .url { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; margin: 6px 0 10px; }
+.net-detail h4 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.net-detail .console { max-height: 360px; }
+.net-detail .kv { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
 /* ── Build ── */
 .project { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
 .project-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }

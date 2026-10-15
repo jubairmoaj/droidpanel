@@ -15,6 +15,7 @@ const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'pu
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
+  '.dart': 'text/plain; charset=utf-8', '.kt': 'text/plain; charset=utf-8',
 };
 
 // Small in-memory server log, shown in the UI's "Panel log".
@@ -160,6 +161,10 @@ export function createApp({ port, host }) {
       streamLogcat(serialOf(u), req, res, u);
       return true;
     }
+    if (key === 'GET /api/net') {
+      streamNet(serialOf(u), req, res);
+      return true;
+    }
     return false;
   }
 
@@ -183,6 +188,45 @@ export function createApp({ port, host }) {
       res.write(`data: ${JSON.stringify(batch)}\n\n`);
       batch = [];
     }, 150);
+    const ping = setInterval(() => res.write(': ping\n\n'), 15000);
+    const end = () => { clearInterval(timer); clearInterval(ping); proc.kill(); };
+    proc.on('close', () => { res.write('event: end\ndata: {}\n\n'); res.end(); end(); });
+    req.on('close', end);
+  }
+
+  // Network inspector: apps print `DPNET|<key>|<i>|<n>|<json chunk>` lines to logcat
+  // (see public/snippets). We reassemble the chunks and stream complete events as SSE.
+  function streamNet(serial, req, res) {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+    res.write(': ok\n\n');
+    const proc = A.adbSpawn(serial, ['logcat', '-v', 'raw', '-T', '5000', 'flutter:V', 'DPNET:V', '*:S']);
+    const partial = new Map(); // key -> { n, parts, at }
+    let batch = [];
+    onLines(proc.stdout, (line) => {
+      const at = line.indexOf('DPNET|');
+      if (at < 0) return;
+      const rest = line.slice(at + 6);
+      const p1 = rest.indexOf('|'), p2 = rest.indexOf('|', p1 + 1), p3 = rest.indexOf('|', p2 + 1);
+      if (p1 < 0 || p2 < 0 || p3 < 0) return;
+      const key = rest.slice(0, p1);
+      const i = Number(rest.slice(p1 + 1, p2)), n = Number(rest.slice(p2 + 1, p3));
+      if (!(n > 0 && n <= 2000 && i >= 0 && i < n)) return;
+      let e = partial.get(key);
+      if (!e || e.n !== n) partial.set(key, (e = { n, parts: new Array(n), got: 0, at: Date.now() }));
+      if (e.parts[i] === undefined) e.got++;
+      e.parts[i] = rest.slice(p3 + 1);
+      if (e.got < n) {
+        if (partial.size > 300) partial.delete(partial.keys().next().value); // drop the oldest broken one
+        return;
+      }
+      partial.delete(key);
+      try { batch.push(JSON.parse(e.parts.join(''))); } catch { /* corrupted line */ }
+    });
+    const timer = setInterval(() => {
+      if (!batch.length) return;
+      res.write(`data: ${JSON.stringify(batch)}\n\n`);
+      batch = [];
+    }, 200);
     const ping = setInterval(() => res.write(': ping\n\n'), 15000);
     const end = () => { clearInterval(timer); clearInterval(ping); proc.kill(); };
     proc.on('close', () => { res.write('event: end\ndata: {}\n\n'); res.end(); end(); });

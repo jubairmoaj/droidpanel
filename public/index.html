@@ -63,6 +63,7 @@
       <button role="tab" data-tab="overview" class="active"><i data-ic="phone"></i>Overview</button>
       <button role="tab" data-tab="apps"><i data-ic="package"></i>Apps</button>
       <button role="tab" data-tab="logcat"><i data-ic="logs"></i>Logcat</button>
+      <button role="tab" data-tab="network"><i data-ic="globe"></i>Network</button>
       <button role="tab" data-tab="build"><i data-ic="hammer"></i>Build &amp; Run</button>
       <button role="tab" data-tab="tools"><i data-ic="terminal"></i>Tools</button>
     </nav>
@@ -115,6 +116,37 @@
         <span class="muted small" id="logCount">0 lines</span>
       </div>
       <div class="logcat" id="logView"></div>
+    </div>
+
+    <!-- Network -->
+    <div class="panel" data-panel="network">
+      <div class="row wrap">
+        <button class="btn primary" id="netToggle"><i data-ic="play"></i><span>Capture</span></button>
+        <button class="btn c-red" id="netClear"><i data-ic="eraser"></i><span>Clear</span></button>
+        <input id="netSearch" type="search" placeholder="Filter by URL, e.g. /products">
+        <select id="netStatus" aria-label="Status filter">
+          <option value="">All</option><option value="2">2xx OK</option><option value="3">3xx</option>
+          <option value="4">4xx</option><option value="5">5xx</option><option value="err">Failed</option><option value="pending">Pending</option>
+        </select>
+        <button class="btn c-gray" id="netHelpBtn"><i data-ic="help"></i><span>Setup</span></button>
+      </div>
+      <div class="net-help" id="netHelp" hidden>
+        <p><b>How it works:</b> your app writes each request to logcat with a tiny debug-only logger, and droidpanel shows it here. Works with HTTPS, no certificates or proxy needed.</p>
+        <p><b>Flutter (Dio)</b>: copy <a href="snippets/droidpanel_net.dart" target="_blank">droidpanel_net.dart</a> into your app, then:</p>
+        <pre class="console">import 'package:flutter/foundation.dart';
+
+if (kDebugMode) dio.interceptors.add(DroidpanelNetLog());</pre>
+        <p><b>Native Android (OkHttp / Retrofit)</b>: copy <a href="snippets/DroidpanelNet.kt" target="_blank">DroidpanelNet.kt</a>, then:</p>
+        <pre class="console">OkHttpClient.Builder()
+    .apply { if (BuildConfig.DEBUG) addNetworkInterceptor(droidpanel.DroidpanelNet()) }
+    .build()</pre>
+        <p class="muted small">Authorization and cookie headers are masked. Bodies over 64 KB are truncated. Requests made before you press Capture also appear if they are still in the logcat buffer.</p>
+      </div>
+      <div class="net-split">
+        <div class="net-list" id="netList"><p class="muted net-empty">Press <b>Capture</b>, then use your app. No requests showing? Click <b>Setup</b>.</p></div>
+        <div class="net-detail" id="netDetail" hidden></div>
+      </div>
+      <div class="muted small" id="netCount"></div>
     </div>
 
     <!-- Build & Run -->

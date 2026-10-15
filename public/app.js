@@ -69,6 +69,7 @@ function refreshTab() {
   if (state.tab === 'overview') loadOverview();
   if (state.tab === 'apps') loadApps();
   if (state.tab === 'build') loadProjects();
+  if (state.tab === 'network' && state.serial && !netSource) startNet();
   if (state.tab === 'tools') loadPanelLog();
 }
 
@@ -125,6 +126,7 @@ function selectDevice(serial) {
   if (changed) {
     mirror.stop();
     stopLogcat();
+    stopNet();
   }
   mirror.serial = serial || null;
   updateDot();
@@ -546,6 +548,167 @@ const relog = () => { clearTimeout(logDebounce); logDebounce = setTimeout(() => 
 $('#logLevel').onchange = relog;
 $('#logSearch').oninput = relog;
 $('#logPkg').onchange = () => { pidSet = new Set(); refreshPids().then(() => renderLog(true)); };
+
+// ── Network ─────────────────────────────────────────────────────────────────
+let netSource = null;
+const netItems = new Map(); // id -> request entry
+let netOrder = [];
+let netSelected = null;
+let netRenderQueued = false;
+const MAX_NET = 2000;
+
+const netCat = (it) => (!it.done ? 'pending' : it.status ? String(it.status)[0] : 'err');
+const fmtSize = (n) => (n == null ? '' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+const fmtMs = (n) => (n == null ? '' : n < 1000 ? `${n} ms` : `${(n / 1000).toFixed(2)} s`);
+const pretty = (body) => {
+  if (body == null || body === '') return '';
+  try { return JSON.stringify(JSON.parse(body), null, 2); } catch { return String(body); }
+};
+function urlParts(u) {
+  try {
+    const x = new URL(u);
+    return { host: x.host, path: x.pathname + x.search };
+  } catch { return { host: '', path: u ?? '' }; }
+}
+
+function startNet() {
+  try { needDevice(); } catch (e) { return fail(e); }
+  stopNet();
+  netSource = new EventSource(`/api/net?serial=${encodeURIComponent(state.serial)}`);
+  netSource.onmessage = (e) => {
+    for (const { phase, ...ev } of JSON.parse(e.data)) {
+      let it = netItems.get(ev.id);
+      if (!it) {
+        it = { id: ev.id };
+        netItems.set(ev.id, it);
+        netOrder.push(ev.id);
+      }
+      Object.assign(it, ev);
+      if (phase === 'end') it.done = true;
+    }
+    while (netOrder.length > MAX_NET) netItems.delete(netOrder.shift());
+    queueNetRender();
+  };
+  netSource.addEventListener('end', () => { stopNet(); toast('Network capture ended'); });
+  netSource.onerror = () => { if (netSource?.readyState === EventSource.CLOSED) stopNet(); };
+  setBtn($('#netToggle'), 'stop', 'Stop', 'c-red');
+}
+
+function stopNet() {
+  netSource?.close();
+  netSource = null;
+  setBtn($('#netToggle'), 'play', 'Capture', 'primary');
+}
+
+function queueNetRender() {
+  if (netRenderQueued) return;
+  netRenderQueued = true;
+  requestAnimationFrame(() => {
+    netRenderQueued = false;
+    renderNet();
+  });
+}
+
+function renderNet() {
+  const list = $('#netList');
+  const q = $('#netSearch').value.trim().toLowerCase();
+  const st = $('#netStatus').value;
+  const items = netOrder.map((id) => netItems.get(id))
+    .filter((it) => (!q || (it.url ?? '').toLowerCase().includes(q)) && (!st || netCat(it) === st));
+  const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 30;
+  list.innerHTML = items.length ? items.map((it) => {
+    const { host, path } = urlParts(it.url);
+    const cat = netCat(it);
+    const size = it.resBody != null ? it.resBody.length : null;
+    return `<div class="net-row${it.id === netSelected ? ' sel' : ''}" data-net="${esc(it.id)}" title="${esc(it.url)}">
+      <span class="st st-${cat}">${cat === 'pending' ? '…' : cat === 'err' ? 'ERR' : esc(it.status)}</span>
+      <span class="m m-${esc(it.method)}">${esc(it.method ?? '')}</span>
+      <span class="path"><span class="host">${esc(host)}</span>${esc(path)}</span>
+      <span class="num">${fmtSize(size)}</span>
+      <span class="num">${fmtMs(it.durationMs)}</span>
+    </div>`;
+  }).join('') : `<p class="muted net-empty">${netOrder.length ? 'No requests match the filter.' : netSource
+    ? 'Listening… use your app. Nothing showing? Click <b>Setup</b>: the app needs the small logger.'
+    : 'Press <b>Capture</b>, then use your app. No requests showing? Click <b>Setup</b>.'}</p>`;
+  if (atBottom) list.scrollTop = list.scrollHeight;
+  const failed = [...netItems.values()].filter((it) => ['4', '5', 'err'].includes(netCat(it))).length;
+  $('#netCount').textContent = netOrder.length ? `${items.length} shown · ${netOrder.length} captured · ${failed} failed` : '';
+  if (netSelected && netItems.has(netSelected)) renderNetDetail(netItems.get(netSelected));
+}
+
+function kvTable(h) {
+  const entries = Object.entries(h ?? {});
+  return entries.length
+    ? `<dl class="kv">${entries.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`
+    : '<p class="muted small">None</p>';
+}
+
+function curlFor(it) {
+  const sq = (x) => `'${String(x).replace(/'/g, `'\\''`)}'`;
+  const parts = [`curl -X ${it.method} ${sq(it.url)}`];
+  for (const [k, v] of Object.entries(it.reqHeaders ?? {})) parts.push(`-H ${sq(`${k}: ${v}`)}`);
+  if (it.reqBody) parts.push(`--data-raw ${sq(it.reqBody)}`);
+  return parts.join(' \\\n  ');
+}
+
+function renderNetDetail(it) {
+  const box = $('#netDetail');
+  const sig = `${it.id}:${it.done}`;
+  if (box.dataset.sig === sig && !box.hidden) return; // unchanged; keep scroll position
+  box.dataset.sig = sig;
+  box.hidden = false;
+  $('.net-split').classList.add('open');
+  const cat = netCat(it);
+  box.innerHTML = `
+    <div class="row wrap" style="margin:0">
+      <span class="st st-${cat}">${cat === 'pending' ? 'Pending' : cat === 'err' ? 'Failed' : esc(it.status)}</span>
+      <span class="m m-${esc(it.method)}">${esc(it.method)}</span>
+      <span class="muted small">${fmtMs(it.durationMs)}${it.resBody != null ? ` · ${fmtSize(it.resBody.length)}` : ''}${it.startedAt ? ` · ${new Date(it.startedAt).toLocaleTimeString()}` : ''}</span>
+      <span class="spacer"></span>
+      <button class="btn icon c-gray" id="netClose" title="Close" aria-label="Close">${ic('x')}</button>
+    </div>
+    <div class="url">${esc(it.url)}</div>
+    <div class="btn-grid">
+      <button class="btn c-blue" data-copy="url">${ic('copy')}<span>URL</span></button>
+      <button class="btn c-teal" data-copy="curl">${ic('terminal')}<span>cURL</span></button>
+      <button class="btn c-purple" data-copy="res"${it.resBody ? '' : ' disabled'}>${ic('copy')}<span>Response</span></button>
+    </div>
+    ${it.error ? `<h4>Error</h4><pre class="console">${esc(it.error)}</pre>` : ''}
+    <h4>Response body</h4>${it.resBody ? `<pre class="console">${esc(pretty(it.resBody))}</pre>` : `<p class="muted small">${it.done ? 'Empty' : 'Waiting…'}</p>`}
+    ${it.reqBody ? `<h4>Request body</h4><pre class="console">${esc(pretty(it.reqBody))}</pre>` : ''}
+    <h4>Request headers</h4>${kvTable(it.reqHeaders)}
+    <h4>Response headers</h4>${kvTable(it.resHeaders)}`;
+  $('#netClose').onclick = () => {
+    netSelected = null;
+    box.hidden = true;
+    $('.net-split').classList.remove('open');
+    queueNetRender();
+  };
+  $$('[data-copy]', box).forEach((b) => (b.onclick = () => {
+    const text = b.dataset.copy === 'url' ? it.url : b.dataset.copy === 'curl' ? curlFor(it) : pretty(it.resBody);
+    navigator.clipboard.writeText(text).then(() => toast('Copied'), fail);
+  }));
+}
+
+$('#netList').onclick = (e) => {
+  const row = e.target.closest('[data-net]');
+  if (!row) return;
+  netSelected = row.dataset.net;
+  $$('.net-row').forEach((r) => r.classList.toggle('sel', r === row));
+  renderNetDetail(netItems.get(netSelected));
+};
+$('#netToggle').onclick = () => (netSource ? stopNet() : startNet());
+$('#netClear').onclick = () => {
+  netItems.clear();
+  netOrder = [];
+  netSelected = null;
+  $('#netDetail').hidden = true;
+  $('.net-split').classList.remove('open');
+  renderNet();
+};
+$('#netSearch').oninput = queueNetRender;
+$('#netStatus').onchange = queueNetRender;
+$('#netHelpBtn').onclick = () => { $('#netHelp').hidden = !$('#netHelp').hidden; };
 
 // ── Build & Run ─────────────────────────────────────────────────────────────
 let projects = [];

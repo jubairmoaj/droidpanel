@@ -14,6 +14,7 @@ A lightweight web dashboard for Android app development. It runs on your PC, ope
 | **Mirror** | Live screen in the browser · real-time touch, swipe, scroll · keyboard typing · **Ctrl+V pastes your PC clipboard** · device clipboard syncs back · back/home/recents/volume/power/rotate · 3 quality presets · *lite mode* (screenshots) when scrcpy isn't installed |
 | **Capture** | **One-click screenshot → clipboard** (`Ctrl+Shift+S`) · save PNG · screen recording to MP4 |
 | **Logcat** | Live stream · filter by **app package** (follows restarts) · level · search/regex with highlights · pause · clear · save |
+| **Network** | See every API call your app makes: method, status, URL, timing, request/response headers and bodies (pretty JSON) · filter by URL and status · copy as cURL · works with HTTPS, no proxy or certificates. Add the tiny debug-only logger from [`public/snippets`](public/snippets) (Dio for Flutter, OkHttp for native) |
 | **Apps** | Search installed packages · version and install info · launch / restart / force-stop / clear data / uninstall · open App info · **download the APK** · **drag-and-drop APK install** |
 | **Build & Run** | Add Flutter, native Android (Gradle) or React Native projects · `flutter run` with **hot reload / hot restart** buttons · build debug/release · install · launch · one-click *stop → build → install → launch* · live build log |
 | **Dev toggles** | Layout bounds · show taps · pointer location · GPU overdraw · animations off · dark mode · large font · don't keep activities · stay awake |
