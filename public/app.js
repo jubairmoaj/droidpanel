@@ -743,7 +743,52 @@ async function loadProjects() {
   } catch (e) { fail(e); }
 }
 
+function renderQuickProjects() {
+  const sel = $('#quickProject');
+  const saved = store.get('quickProject', '');
+  sel.innerHTML = projects.length
+    ? projects.map((p) => `<option value="${p.id}">${esc(p.name)} (${esc(p.type)})</option>`).join('')
+    : '<option value="">No project — add one in Build &amp; Run</option>';
+  if (projects.some((p) => p.id === saved)) sel.value = saved;
+  $('#quickRun').disabled = $('#quickStop').disabled = !projects.length;
+}
+$('#quickProject').onchange = (e) => store.set('quickProject', e.target.value);
+
+// The Stop button cancels a running build for that project, otherwise force-stops the app.
+let quickJob = null; // { id, projectId, status }
+function updateQuick(j) {
+  const badge = $('#quickStatus');
+  if (j) quickJob = { id: j.id, projectId: j.projectId, status: j.status };
+  const running = quickJob?.status === 'running';
+  $('#quickRun').disabled = running || !projects.length;
+  setBtn($('#quickRun'), 'rocket', running ? 'Building…' : 'Rebuild & run');
+  setBtn($('#quickStop'), 'stop', running ? 'Cancel' : 'Stop');
+  if (!j) return;
+  badge.hidden = false;
+  badge.className = `badge ${j.status}`;
+  badge.textContent = j.status === 'running' ? (j.step ?? 'starting').replace(':', ' ') : j.status === 'ok' ? 'done' : j.status;
+}
+$('#quickRun').onclick = (e) => busy(e.currentTarget, async () => {
+  const id = $('#quickProject').value;
+  if (!id) throw new Error('Add a project in Build & Run first');
+  const job = await api('/api/projects/run', { body: { id, task: 'deploy-debug', serial: needDevice() } });
+  updateQuick(job);
+  followJob(job.id);
+});
+$('#quickStop').onclick = (e) => busy(e.currentTarget, async () => {
+  if (quickJob?.status === 'running') {
+    await api('/api/jobs/stop', { body: { id: quickJob.id } });
+    return;
+  }
+  const p = projects.find((x) => x.id === $('#quickProject').value);
+  if (!p?.packageId) throw new Error('Set the application id in Build & Run first');
+  const r = await api('/api/app', { body: { serial: needDevice(), pkg: p.packageId, action: 'stop' } });
+  if (!r.ok) throw new Error(r.output);
+  toast(`Stopped ${p.name}`);
+});
+
 function renderProjects() {
+  renderQuickProjects();
   $('#projects').innerHTML = projects.length ? projects.map((p) => `
     <div class="project" data-id="${p.id}">
       <div class="project-head">
@@ -836,6 +881,7 @@ async function pollJob() {
     jobFrom = j.from + j.lines.length;
   }
   if (atBottom) pre.scrollTop = pre.scrollHeight;
+  updateQuick(j);
   $('#jobTitle').textContent = `${j.project} · ${j.task}${j.step && j.status === 'running' ? ` · ${j.step}` : ''}`;
   const st = $('#jobStatus');
   st.textContent = j.status;
@@ -1003,6 +1049,7 @@ async function wifiConnect(host, btn) {
     toast(`Connected to ${host}`);
     state.devSig = '';
     await loadDevices();
+api('/api/projects').then((d) => { projects = d.projects; renderQuickProjects(); }).catch(() => {});
     renderWifiDevices();
   });
 }

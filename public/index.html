@@ -35,6 +35,12 @@
       <button id="shotSaveBtn" class="btn icon c-purple" title="Save screenshot as PNG" aria-label="Save screenshot"><i data-ic="download"></i></button>
       <button id="recBtn" class="btn c-red" title="Record screen (max 3 min)"><i data-ic="record"></i><span>Record</span></button>
     </div>
+    <div class="app-bar" id="appBar">
+      <select id="quickProject" title="App to rebuild" aria-label="App to rebuild"><option value="">No project — add one in Build &amp; Run</option></select>
+      <button id="quickRun" class="btn c-teal" title="Stop → build debug → install → launch"><i data-ic="rocket"></i><span>Rebuild &amp; run</span></button>
+      <button id="quickStop" class="btn c-red" title="Force-stop the app"><i data-ic="stop"></i><span>Stop</span></button>
+      <span class="badge" id="quickStatus" hidden></span>
+    </div>
     <div class="stage" id="stage">
       <canvas id="screen" tabindex="0"></canvas>
       <div class="stage-msg" id="stageMsg">
