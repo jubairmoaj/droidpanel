@@ -131,6 +131,8 @@ export function createAgent(backend) {
     get connected() { return connected; },
     get url() { return base(); },
     setUrl(u) { store.set(STORE.url, u); ws?.close(); },
+    /** WebSocket URL that the helper turns into a TCP connection to host:port (Wi-Fi debugging). */
+    tcpUrl: (host) => `${base().replace(/^http/, 'ws')}/tcp?host=${encodeURIComponent(host)}`,
     onChange: (fn) => listeners.add(fn),
     status: () => api('/api/agent'),
   };

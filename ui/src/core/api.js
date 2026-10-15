@@ -10,6 +10,7 @@ export const WEB = env.mode === 'web';
 export const backend = WEB ? await import('./web/backend.js').then((m) => m.createBackend(env)) : null;
 /** Hosted mode only: the PC helper that runs Build & Run (see web/agent.js). */
 export const agent = backend ? (await import('./web/agent.js')).createAgent(backend) : null;
+backend?.useAgent(agent);
 const AGENT_PATHS = /^\/api\/(projects|jobs)(\/|\?|$)/;
 
 /** JSON API helper. POST when a body is given; throws Error(message) on failure. */

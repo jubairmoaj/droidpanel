@@ -5,6 +5,7 @@
 // and checks the Host header (DNS rebinding). Device access goes through the browser:
 // see relay.mjs.
 import { createServer } from 'node:http';
+import net from 'node:net';
 import { createRequire } from 'node:module';
 import { projectRoutes } from './project-routes.mjs';
 import { stopAllJobs } from './projects.mjs';
@@ -26,6 +27,7 @@ export function createAgent({ port, origins, relay, log }) {
     adb: which(process.env.ADB || 'adb'),
     platform: process.platform,
     browserConnected: relay.connected,
+    features: ['tcp'],
   }));
 
   function cors(req, res) {
@@ -60,14 +62,60 @@ export function createAgent({ port, origins, relay, log }) {
 
   server.on('upgrade', (req, socket) => {
     const u = new URL(req.url, 'http://localhost');
-    if (u.pathname !== '/bridge' || !allowedHosts.has(req.headers.host ?? '') || !origins.has(req.headers.origin ?? '')) {
+    if (!['/bridge', '/tcp'].includes(u.pathname) || !allowedHosts.has(req.headers.host ?? '') || !origins.has(req.headers.origin ?? '')) {
       socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
       return;
     }
-    relay.attachBridge(acceptWebSocket(req, socket));
+    const ws = acceptWebSocket(req, socket);
+    if (u.pathname === '/bridge') relay.attachBridge(ws);
+    else tcpTunnel(ws, u.searchParams.get('host') ?? '', log);
   });
 
   return server;
+}
+
+/** Only phones on the local network: the panel must not be able to use the helper as a general proxy. */
+function lanTarget(hostPort) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3}):(\d{1,5})$/.exec(hostPort);
+  if (!m) return null;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  const port = Number(m[5]);
+  if (m.slice(1, 5).some((x) => Number(x) > 255) || port < 1 || port > 65535) return null;
+  const lan = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+    || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127); // 100.64/10: Tailscale/CGNAT
+  return lan ? { host: m.slice(1, 5).join('.'), port } : null;
+}
+
+/**
+ * Wi-Fi debugging for hosted mode: pipe a TCP connection to the phone's adbd (adb tcpip mode)
+ * through a WebSocket. The browser speaks the ADB protocol itself (ui/src/core/adb/tcp.js).
+ */
+function tcpTunnel(ws, hostPort, log) {
+  const target = lanTarget(hostPort);
+  if (!target) {
+    ws.send(JSON.stringify({ ok: false, error: `Not a local-network address: ${hostPort} (use the phone's Wi-Fi IP, e.g. 192.168.1.20:5555)` }));
+    return ws.close();
+  }
+  const sock = net.connect(target);
+  let open = false;
+  sock.setTimeout(4000, () => sock.destroy(new Error('timed out')));
+  sock.once('connect', () => {
+    open = true;
+    sock.setTimeout(0);
+    sock.setNoDelay(true);
+    ws.send(JSON.stringify({ ok: true }));
+    log(`[wifi] connected to ${hostPort}`);
+  });
+  sock.on('data', (d) => ws.send(d));
+  sock.on('error', (e) => {
+    if (!open) {
+      ws.send(JSON.stringify({ ok: false, error: `Can't reach ${hostPort} (${e.message}). Is the phone on the same Wi-Fi as this PC, `
+        + 'with Wi-Fi debugging switched on? Some routers block device-to-device traffic (AP isolation).' }));
+    }
+  });
+  sock.on('close', () => ws.close());
+  ws.onMessage((data, isText) => { if (!isText) sock.write(data); });
+  ws.onClose(() => sock.destroy());
 }
 
 /** Start the relay (fake adb server) and the agent. Every adb call from this process tree goes to the relay. */

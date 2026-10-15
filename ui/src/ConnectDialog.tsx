@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Info, KeyRound, Link2, QrCode, RefreshCw, Usb, Wifi, X } from 'lucide-react';
-import { WEB, api, backend, useDevices } from './state';
+import { WEB, api, backend, useAgentConnected, useDevices } from './state';
 import { Button, store, useBusy, useToast } from './ui';
 
-type Tab = 'usb' | 'qr' | 'code' | 'ip';
+type Tab = 'usb' | 'qr' | 'code' | 'ip' | 'wifi';
 
 export function ConnectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
-  const [tab, setTab] = useState<Tab>(WEB ? 'usb' : (store.get('ctab', 'usb') as Tab));
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = store.get('ctab', 'usb') as Tab;
+    return WEB ? (t === 'wifi' ? 'wifi' : 'usb') : t === 'wifi' ? 'usb' : t;
+  });
   const [out, setOut] = useState('');
   useEffect(() => {
     const d = ref.current!;
@@ -22,18 +25,18 @@ export function ConnectDialog({ open, onClose }: { open: boolean; onClose: () =>
         <h2>Connect a device</h2>
         <Button variant="ghost" icon={X} onClick={onClose} aria-label="Close" />
       </div>
-      {!WEB && (
-        <div className="tabs" style={{ padding: '0 12px' }}>
-          {([['usb', 'USB', Usb], ['qr', 'QR code', QrCode], ['code', 'Pairing code', KeyRound], ['ip', 'IP address', Link2]] as const).map(([k, label, Icon]) => (
-            <button key={k} type="button" className={`tab${tab === k ? ' on' : ''}`} onClick={() => pick(k)}><Icon />{label}</button>
-          ))}
-        </div>
-      )}
+      <div className="tabs" style={{ padding: '0 12px' }}>
+        {(WEB ? [['usb', 'USB', Usb], ['wifi', 'Wi-Fi', Wifi]] as const
+          : [['usb', 'USB', Usb], ['qr', 'QR code', QrCode], ['code', 'Pairing code', KeyRound], ['ip', 'IP address', Link2]] as const).map(([k, label, Icon]) => (
+          <button key={k} type="button" className={`tab${tab === k ? ' on' : ''}`} onClick={() => pick(k)}><Icon />{label}</button>
+        ))}
+      </div>
       <div className="modal-body">
         {open && tab === 'usb' && <UsbPanel onDone={onClose} setOut={setOut} />}
         {open && tab === 'qr' && <QrPanel />}
         {open && tab === 'code' && <CodePanel setOut={setOut} />}
         {open && tab === 'ip' && <IpPanel setOut={setOut} />}
+        {open && tab === 'wifi' && <WebWifiPanel setOut={setOut} onDone={onClose} />}
         {out && <pre className="console" style={{ maxHeight: 180 }}>{out}</pre>}
       </div>
     </dialog>
@@ -204,6 +207,65 @@ function IpPanel({ setOut }: { setOut: (s: string) => void }) {
         ))}
         {!wifi.length && <span className="muted small">No Wi-Fi devices connected</span>}
       </div>
+    </>
+  );
+}
+
+/** Hosted mode: Wi-Fi debugging in adb tcpip mode, through the PC helper's TCP tunnel. */
+function WebWifiPanel({ setOut, onDone }: { setOut: (s: string) => void; onDone: () => void }) {
+  const { devices, serial, select, refresh } = useDevices();
+  const helper = useAgentConnected();
+  const { toast } = useToast();
+  const { busy, run } = useBusy();
+  const [host, setHost] = useState('');
+  const usb = devices.find((d) => d.serial === serial && d.transport === 'usb' && d.state === 'device');
+  const wifi = devices.filter((d) => d.transport === 'wifi');
+
+  if (!helper) {
+    return (
+      <div className="note warn"><Info /><span>A web page can't open network connections to your phone, so Wi-Fi debugging goes through the
+        <b> PC helper</b>. Start it and press <b>Connect</b> in the <b>Build &amp; Run</b> tab, then come back here.</span></div>
+    );
+  }
+  const done = (r: { ok: boolean; output: string }, target?: string) => {
+    setOut(r.ok ? '' : r.output);
+    if (!r.ok) throw new Error('Could not connect over Wi-Fi — see details below');
+    refresh().then(() => target && select(target));
+    toast('Connected over Wi-Fi — you can unplug the cable');
+    onDone();
+  };
+  return (
+    <>
+      <p style={{ margin: 0 }}>Works on any Android version. The phone and this PC must be on the same Wi-Fi.</p>
+      <div className="panel panel-pad stack" style={{ gap: 8 }}>
+        <b>1. Switch a USB phone to Wi-Fi</b>
+        <span className="muted small">{usb ? `Selected: ${usb.model || usb.serial} (USB)` : 'Connect the phone over USB first and select it.'}</span>
+        <Button variant="primary" icon={Wifi} disabled={!usb} loading={busy === 'switch'} onClick={() => run('switch', async () => {
+          setOut('Switching the phone to Wi-Fi debugging… (up to ~10 s)');
+          const r = await api('/api/wireless/usb-to-wifi', { body: { serial } });
+          done(r);
+        })}>Switch USB → Wi-Fi</Button>
+      </div>
+      <div className="panel panel-pad stack" style={{ gap: 8 }}>
+        <b>2. Or connect by IP</b>
+        <span className="muted small">For a phone already switched (it stays in Wi-Fi mode until it restarts).</span>
+        <form className="toolbar" onSubmit={(e) => { e.preventDefault(); run('ip', async () => {
+          const target = host.trim();
+          done(await api('/api/wireless/connect', { body: { host: target } }), /:\d+$/.test(target) ? target : `${target}:5555`);
+        }); }}>
+          <input className="input mono grow" placeholder="192.168.1.20:5555" value={host} onChange={(e) => setHost(e.target.value)} required />
+          <Button type="submit" icon={Link2} loading={busy === 'ip'}>Connect</Button>
+        </form>
+      </div>
+      <div className="chips">
+        {wifi.map((d) => (
+          <span key={d.serial} className="chip">{d.model || d.serial} · <span className="mono">{d.serial}</span>{d.state !== 'device' && <span className="muted"> · {d.state}</span>}
+            <Button size="sm" variant="ghost" icon={X} title="Disconnect" onClick={() => run(d.serial, async () => { await api('/api/wireless/disconnect', { body: { serial: d.serial } }); refresh(); })} />
+          </span>
+        ))}
+        {!wifi.length && <span className="muted small">No phones on Wi-Fi yet</span>}
+      </div>
+      <p className="muted small" style={{ margin: 0 }}>Pairing with a code or QR (Android 11+ Wireless debugging) is available in the desktop app.</p>
     </>
   );
 }
