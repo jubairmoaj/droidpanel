@@ -1,5 +1,8 @@
 import { api } from './api.js';
 import { Mirror } from './mirror.js';
+import { ic, hydrateIcons, setBtn } from './icons.js';
+
+hydrateIcons();
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -139,8 +142,7 @@ const mirror = new Mirror({
   onState: (s, msg) => {
     const btn = $('#mirrorBtn');
     const on = s === 'connecting' || s === 'live';
-    btn.textContent = on ? '■ Stop' : '▶ Mirror';
-    btn.classList.toggle('primary', !on);
+    setBtn(btn, on ? 'stop' : 'play', on ? 'Stop' : 'Mirror', on ? 'c-red' : 'primary');
     if (s === 'connecting') $('#mirrorStats').textContent = 'Connecting…';
     if (s === 'off') $('#mirrorStats').textContent = '—';
     if (s === 'error') toast(`Mirror: ${msg}`, true);
@@ -208,14 +210,14 @@ function setRecUi(startedAt) {
   const btn = $('#recBtn');
   clearInterval(recTimer);
   if (!startedAt) {
-    btn.textContent = '⏺ Record';
+    setBtn(btn, 'record', 'Record', 'c-red');
     btn.classList.remove('recording');
     return;
   }
-  btn.classList.add('recording');
   const tick = () => {
     const s = Math.floor((Date.now() - startedAt) / 1000);
-    btn.textContent = `■ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    setBtn(btn, 'stop', `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`, 'solid-red');
+    btn.classList.add('recording');
   };
   tick();
   recTimer = setInterval(tick, 1000);
@@ -352,14 +354,14 @@ async function showApp(pkg) {
         <dt>Updated</dt><dd>${esc(d.lastUpdate ?? '—')}</dd>
       </dl>
       <div class="btn-grid">
-        <button class="btn primary" data-act="launch">▶ Launch</button>
-        <button class="btn" data-act="restart">↻ Restart</button>
-        <button class="btn" data-act="stop">■ Force stop</button>
-        <button class="btn" data-act="logcat">Logcat</button>
-        <button class="btn" data-act="info">App info</button>
-        <button class="btn" data-act="apk">⤓ APK</button>
-        <button class="btn danger" data-act="clear">Clear data</button>
-        <button class="btn danger" data-act="uninstall">Uninstall</button>
+        <button class="btn primary" data-act="launch">${ic('play')}<span>Launch</span></button>
+        <button class="btn c-blue" data-act="restart">${ic('restart')}<span>Restart</span></button>
+        <button class="btn c-amber" data-act="stop">${ic('stop')}<span>Force stop</span></button>
+        <button class="btn c-teal" data-act="logcat">${ic('logs')}<span>Logcat</span></button>
+        <button class="btn c-gray" data-act="info">${ic('info')}<span>App info</span></button>
+        <button class="btn c-purple" data-act="apk">${ic('download')}<span>APK</span></button>
+        <button class="btn c-red" data-act="clear">${ic('eraser')}<span>Clear data</span></button>
+        <button class="btn c-red" data-act="uninstall">${ic('trash')}<span>Uninstall</span></button>
       </div>`;
     $$('[data-act]', box).forEach((b) => (b.onclick = () => appAction(pkg, b.dataset.act, b)));
   } catch (e) {
@@ -511,22 +513,20 @@ function startLogcat() {
   };
   logSource.addEventListener('end', () => { stopLogcat(); toast('Logcat ended'); });
   logSource.onerror = () => { if (logSource?.readyState === EventSource.CLOSED) stopLogcat(); };
-  $('#logToggle').textContent = '■ Stop';
-  $('#logToggle').classList.remove('primary');
+  setBtn($('#logToggle'), 'stop', 'Stop', 'c-red');
 }
 
 function stopLogcat() {
   logSource?.close();
   logSource = null;
   clearInterval(pidTimer);
-  $('#logToggle').textContent = '▶ Start';
-  $('#logToggle').classList.add('primary');
+  setBtn($('#logToggle'), 'play', 'Start', 'primary');
 }
 
 $('#logToggle').onclick = () => (logSource ? stopLogcat() : startLogcat());
 $('#logPause').onclick = () => {
   logPaused = !logPaused;
-  $('#logPause').textContent = logPaused ? 'Resume' : 'Pause';
+  setBtn($('#logPause'), logPaused ? 'play' : 'pause', logPaused ? 'Resume' : 'Pause', logPaused ? 'c-green' : 'c-amber');
   if (!logPaused) renderLog(true);
 };
 $('#logClear').onclick = async () => {
@@ -554,16 +554,19 @@ let jobFrom = 0;
 let jobTimer = null;
 let jobWasRunning = false;
 
+// [task, icon, label, colour class, tooltip]
 const TASK_BUTTONS = (p) => [
-  ...(p.type === 'flutter' ? [['run', '▶ flutter run', 'primary', 'Debug run with hot reload']] : [['run', '▶ Run', 'primary', 'Build, install and launch']]),
-  ['deploy-debug', 'Stop → Build → Install → Launch', '', 'Full debug deploy'],
-  ['build-debug', 'Build debug', ''],
-  ['build-release', 'Build release', ''],
-  ['install-debug', 'Install debug', ''],
-  ['install-release', 'Install release', ''],
-  ['launch', 'Launch', ''],
-  ['stop', 'Stop app', ''],
-  ['clean', 'Clean', ''],
+  p.type === 'flutter'
+    ? ['run', 'play', 'flutter run', 'primary', 'Debug run on the phone with hot reload']
+    : ['run', 'play', 'Run', 'primary', 'Build, install and launch'],
+  ['deploy-debug', 'rocket', 'Rebuild & launch', 'c-teal', 'Stop → build debug → install → launch'],
+  ['build-debug', 'hammer', 'Build debug', 'c-blue', 'Build a debug APK'],
+  ['build-release', 'hammer', 'Build release', 'c-blue', 'Build a release APK'],
+  ['install-debug', 'package', 'Install debug', 'c-amber', 'Install the last debug APK'],
+  ['install-release', 'package', 'Install release', 'c-amber', 'Install the last release APK'],
+  ['launch', 'play', 'Launch', 'c-green', 'Open the app on the phone'],
+  ['stop', 'stop', 'Stop app', 'c-red', 'Force-stop the app'],
+  ['clean', 'sparkles', 'Clean', 'c-gray', 'Delete build outputs'],
 ];
 
 async function loadProjects() {
@@ -584,7 +587,7 @@ function renderProjects() {
         <b>${esc(p.name)}</b><span class="badge">${esc(p.type)}</span>
         ${p.running ? '<span class="badge running">running</span>' : ''}
         <span class="spacer"></span>
-        <button class="btn icon" data-remove title="Remove from list">✕</button>
+        <button class="btn icon c-gray" data-remove title="Remove from list" aria-label="Remove">${ic('x')}</button>
       </div>
       <div class="meta">${esc(p.root)}</div>
       <div class="row">
@@ -594,7 +597,7 @@ function renderProjects() {
         <input data-field="buildArgs" value="${esc(p.buildArgs)}" placeholder="${p.type === 'flutter' ? 'Extra args, e.g. --dart-define=API_BASE_URL=http://192.168.0.10:4000' : 'Extra Gradle args, e.g. -PmyProp=1'}" title="Extra build/run arguments">
       </div>
       <div class="btn-grid">
-        ${TASK_BUTTONS(p).map(([t, label, cls, title]) => `<button class="btn ${cls}" data-task="${t}" title="${esc(title ?? '')}">${esc(label)}</button>`).join('')}
+        ${TASK_BUTTONS(p).map(([t, icon, label, cls, title]) => `<button class="btn ${cls}" data-task="${t}" title="${esc(title)}">${ic(icon)}<span>${esc(label)}</span></button>`).join('')}
       </div>
     </div>`).join('') : '<p class="muted">No projects yet. Add a Flutter, native Android (Gradle) or React Native project folder above.</p>';
 
@@ -620,7 +623,7 @@ async function loadDiscovered() {
   const found = await api('/api/projects/discover').catch(() => []);
   box.innerHTML = found.length ? `<h3>Found on this PC</h3>${found.map((p) => `
     <div class="mdns-item"><span><b>${esc(p.name)}</b> <span class="badge">${esc(p.type)}</span><br><span class="muted small">${esc(p.root)}</span></span>
-    <button class="btn primary" data-add="${esc(p.root)}">＋ Add</button></div>`).join('')}` : '';
+    <button class="btn primary" data-add="${esc(p.root)}">${ic('plus')}<span>Add</span></button></div>`).join('')}` : '';
   $$('[data-add]', box).forEach((b) => (b.onclick = () => busy(b, async () => {
     const p = await api('/api/projects', { body: { path: b.dataset.add } });
     toast(`Added ${p.name} (${p.type})`);
@@ -809,7 +812,7 @@ async function loadMdns() {
   const list = await api('/api/wireless/mdns').catch(() => []);
   $('#mdnsList').innerHTML = list.length ? `<h3>Found on your network</h3>${list.map((s) => `
     <div class="mdns-item"><span>${esc(s.addr)} <span class="muted">${s.type.includes('pairing') ? 'pairing' : 'debugging'}</span></span>
-    <button class="btn" data-mdns="${esc(s.addr)}" data-kind="${s.type.includes('pairing') ? 'pair' : 'connect'}">${s.type.includes('pairing') ? 'Use' : 'Connect'}</button></div>`).join('')}` : '';
+    <button class="btn c-blue" data-mdns="${esc(s.addr)}" data-kind="${s.type.includes('pairing') ? 'pair' : 'connect'}">${ic(s.type.includes('pairing') ? 'key' : 'wifi')}<span>${s.type.includes('pairing') ? 'Use' : 'Connect'}</span></button></div>`).join('')}` : '';
   $$('[data-mdns]').forEach((b) => (b.onclick = () => {
     if (b.dataset.kind === 'pair') {
       $('#pairHost').value = b.dataset.mdns;
