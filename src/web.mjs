@@ -5,7 +5,7 @@
 // scrcpy-server jar the browser pushes to the phone for mirroring.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
@@ -63,8 +63,28 @@ export async function resolveScrcpy(log = console.log) {
   }
 }
 
+/** Short hash of everything in public/, so each deploy gets new asset URLs. */
+function contentHash() {
+  const h = createHash('sha256');
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else h.update(full.slice(PUBLIC.length)).update(readFileSync(full));
+    }
+  };
+  walk(PUBLIC);
+  return h.digest('hex').slice(0, 12);
+}
+
 export function createWebApp({ scrcpy }) {
   const env = JSON.stringify({ mode: 'web', scrcpy: { available: scrcpy.available, version: scrcpy.version ?? null } });
+  // CDNs such as Cloudflare override no-cache on .js/.css with hours of browser caching, which
+  // mixes old and new files after a deploy. So the page loads its assets from /v/<hash>/…
+  // (via <base>), which can then be cached forever; only the HTML is revalidated.
+  const version = contentHash();
+  const indexHtml = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8')
+    .replace('<head>', `<head>\n  <base href="/v/${version}/">`);
 
   function send(res, status, headers, body) {
     res.writeHead(status, { ...SECURITY_HEADERS, ...headers });
@@ -80,6 +100,12 @@ export function createWebApp({ scrcpy }) {
 
   return createServer((req, res) => {
     const u = new URL(req.url, 'http://localhost');
+    let immutable = false;
+    const v = /^\/v\/[0-9a-f]+(\/.*)$/.exec(u.pathname);
+    if (v) {
+      u.pathname = v[1]; // any version is served from the current files; the HTML always names the current one
+      immutable = true;
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { 'content-type': 'text/plain' }, 'Method not allowed');
     if (u.pathname === '/api/env') return send(res, 200, { 'content-type': 'application/json', 'cache-control': 'no-store' }, env);
     if (u.pathname.startsWith('/api/')) return send(res, 404, { 'content-type': 'application/json' }, '{"error":"Not available in hosted mode"}');
@@ -89,12 +115,14 @@ export function createWebApp({ scrcpy }) {
     }
     let rel;
     try { rel = decodeURIComponent(u.pathname); } catch { return send(res, 400, { 'content-type': 'text/plain' }, 'Bad path'); }
-    if (rel === '/') rel = '/index.html';
+    if (rel === '/' || rel === '/index.html') {
+      return send(res, 200, { 'content-type': TYPES['.html'], 'cache-control': 'no-cache' }, req.method === 'HEAD' ? '' : indexHtml);
+    }
     const file = path.join(PUBLIC, path.normalize(rel));
     if (!file.startsWith(PUBLIC + path.sep)) return send(res, 403, { 'content-type': 'text/plain' }, 'Forbidden');
     let st;
     try { st = statSync(file); } catch { st = null; }
     if (!st?.isFile()) return send(res, 404, { 'content-type': 'text/plain' }, 'Not found');
-    sendFile(req, res, file, TYPES[path.extname(file)] ?? 'application/octet-stream', 'no-cache');
+    sendFile(req, res, file, TYPES[path.extname(file)] ?? 'application/octet-stream', immutable ? 'public, max-age=31536000, immutable' : 'no-cache');
   });
 }
