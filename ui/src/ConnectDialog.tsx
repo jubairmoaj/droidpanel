@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Info, KeyRound, Link2, QrCode, RefreshCw, Usb, Wifi, X } from 'lucide-react';
-import { WEB, api, backend, useAgentConnected, useDevices } from './state';
+import { Copy, Info, KeyRound, Link2, QrCode, RefreshCw, Usb, Wifi, X } from 'lucide-react';
+import { WEB, agent, api, backend, useAgentConnected, useDevices } from './state';
 import { Button, store, useBusy, useToast } from './ui';
 
 type Tab = 'usb' | 'qr' | 'code' | 'ip' | 'wifi';
@@ -265,9 +265,23 @@ function WebWifiPanel({ setOut, onDone }: { setOut: (s: string) => void; onDone:
 /** Hosted mode: Wi-Fi needs the PC helper (a web page can't open network connections or pair). */
 function NeedsHelper({ children }: { children: React.ReactNode }) {
   const helper = useAgentConnected();
+  const { toast, fail } = useToast();
+  const { busy, run } = useBusy();
   if (!WEB || helper) return <>{children}</>;
+  const cmd = `npx -y github:jubairmoaj/droidpanel agent --origin ${location.origin}`;
   return (
-    <div className="note warn"><Info /><span>A web page can't open network connections to your phone, so Wi-Fi debugging goes through the
-      <b> PC helper</b>. Start it and press <b>Connect</b> in the <b>Build &amp; Run</b> tab, then come back here.</span></div>
+    <div className="stack" style={{ gap: 10 }}>
+      <div className="note warn"><Info /><span>Wi-Fi debugging goes through the <b>PC helper</b> (a web page can't open network
+        connections to your phone). Start it once in a terminal on this PC, then press <b>Connect PC helper</b>.</span></div>
+      <pre className="console" style={{ margin: 0, userSelect: 'all' }}>{cmd}</pre>
+      <div className="toolbar">
+        <Button icon={Copy} onClick={() => navigator.clipboard.writeText(cmd).then(() => toast('Command copied'), fail)}>Copy command</Button>
+        <Button variant="primary" icon={Link2} loading={busy === 'helper'} onClick={() => run('helper', async () => {
+          agent!.connect();
+          await agent!.status(); // throws a clear error if the helper isn't running or the browser blocks it
+          toast('PC helper connected');
+        })}>Connect PC helper</Button>
+      </div>
+    </div>
   );
 }
