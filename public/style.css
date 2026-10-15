@@ -90,6 +90,7 @@ input:focus, select:focus, .btn:focus-visible, canvas:focus-visible { outline: 2
 .mirror-bar select { max-width: 170px; }
 .app-bar { display: flex; gap: 6px; align-items: center; padding: 0 10px 10px; flex-wrap: wrap; }
 .app-bar select { flex: 1; min-width: 120px; }
+.app-btns { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .nav-bar { justify-content: center; border-top: 1px solid var(--line); }
 .nav-bar .btn { padding: 7px 10px; }
 .nav-bar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }

@@ -387,7 +387,7 @@ export class Mirror {
     c.addEventListener('keydown', async (e) => {
       if (!this.active) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && e.shiftKey) return; // leave app shortcuts alone
+      if ((mod && e.shiftKey) || e.altKey) return; // leave app shortcuts alone
       if (mod && e.key.toLowerCase() === 'v') {
         e.preventDefault();
         try {

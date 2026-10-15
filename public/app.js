@@ -750,42 +750,96 @@ function renderQuickProjects() {
     ? projects.map((p) => `<option value="${p.id}">${esc(p.name)} (${esc(p.type)})</option>`).join('')
     : '<option value="">No project — add one in Build &amp; Run</option>';
   if (projects.some((p) => p.id === saved)) sel.value = saved;
-  $('#quickRun').disabled = $('#quickStop').disabled = !projects.length;
+  renderQuickBar();
 }
 $('#quickProject').onchange = (e) => store.set('quickProject', e.target.value);
 
-// The Stop button cancels a running build for that project, otherwise force-stops the app.
-let quickJob = null; // { id, projectId, status }
-function updateQuick(j) {
+// ── Mirror app bar: run / hot reload / rebuild / stop without leaving the mirror ──
+const quickProject = () => projects.find((p) => p.id === $('#quickProject').value);
+
+function renderQuickBar() {
+  const p = quickProject();
+  const box = $('#quickBtns');
   const badge = $('#quickStatus');
-  if (j) quickJob = { id: j.id, projectId: j.projectId, status: j.status };
-  const running = quickJob?.status === 'running';
-  $('#quickRun').disabled = running || !projects.length;
-  setBtn($('#quickRun'), 'rocket', running ? 'Building…' : 'Rebuild & run');
-  setBtn($('#quickStop'), 'stop', running ? 'Cancel' : 'Stop');
-  if (!j) return;
-  badge.hidden = false;
-  badge.className = `badge ${j.status}`;
-  badge.textContent = j.status === 'running' ? (j.step ?? 'starting').replace(':', ' ') : j.status === 'ok' ? 'done' : j.status;
-}
-$('#quickRun').onclick = (e) => busy(e.currentTarget, async () => {
-  const id = $('#quickProject').value;
-  if (!id) throw new Error('Add a project in Build & Run first');
-  const job = await api('/api/projects/run', { body: { id, task: 'deploy-debug', serial: needDevice() } });
-  updateQuick(job);
-  followJob(job.id);
-});
-$('#quickStop').onclick = (e) => busy(e.currentTarget, async () => {
-  if (quickJob?.status === 'running') {
-    await api('/api/jobs/stop', { body: { id: quickJob.id } });
-    return;
+  $('#quickAutoWrap').hidden = p?.type !== 'flutter';
+  if (!p) { box.innerHTML = ''; badge.hidden = true; return; }
+  $('#quickAuto').checked = p.autoReload;
+  const b = (act, icon, label, cls, title) => `<button class="btn ${cls}" data-quick="${act}" title="${esc(title)}">${ic(icon)}<span>${label}</span></button>`;
+  const session = p.session;
+  let html;
+  if (session) {
+    html = b('reload', 'zap', 'Hot reload', 'c-amber', 'Apply code changes instantly (keeps app state) — Alt+R')
+      + b('restart', 'restart', 'Restart', 'c-blue', 'Hot restart: re-run main() — Alt+Shift+R')
+      + b('quit', 'stop', 'Stop', 'c-red', 'End the flutter run session');
+  } else if (p.job) {
+    html = b('cancel', 'stop', 'Cancel', 'c-red', 'Cancel the running build');
+  } else {
+    html = (p.type === 'flutter' ? b('run', 'play', 'Run', 'primary', 'flutter run: build once, then hot reload on every change') : '')
+      + b('deploy', 'rocket', p.type === 'flutter' ? 'Rebuild & install' : 'Rebuild & run', p.type === 'flutter' ? 'c-teal' : 'primary', 'Build debug APK → install → launch')
+      + b('stopApp', 'stop', 'Stop app', 'c-red', 'Force-stop the app');
   }
-  const p = projects.find((x) => x.id === $('#quickProject').value);
-  if (!p?.packageId) throw new Error('Set the application id in Build & Run first');
-  const r = await api('/api/app', { body: { serial: needDevice(), pkg: p.packageId, action: 'stop' } });
-  if (!r.ok) throw new Error(r.output);
-  toast(`Stopped ${p.name}`);
+  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
+  badge.hidden = !(session || p.job);
+  if (session) {
+    badge.className = `badge ${session.ready ? 'ok' : 'running'}`;
+    badge.textContent = session.ready ? `live${session.reloads ? ` · ${session.reloads} reloads` : ''}` : 'starting…';
+  } else if (p.job) {
+    badge.className = 'badge running';
+    badge.textContent = (p.job.step ?? 'starting').replace(':', ' ');
+  }
+}
+
+async function refreshQuick() {
+  try {
+    const d = await api('/api/projects');
+    projects = d.projects;
+    if (!$('#quickProject').options.length || $('#quickProject').options.length !== projects.length || !projects.length) renderQuickProjects();
+    renderQuickBar();
+  } catch { /* server restarting */ }
+}
+
+async function quickAction(act, btn) {
+  const p = quickProject();
+  if (!p) throw new Error('Add a project in Build & Run first');
+  const run = async (task) => {
+    const job = await api('/api/projects/run', { body: { id: p.id, task, serial: needDevice() } });
+    followJob(job.id);
+  };
+  if (act === 'run') await run('run');
+  else if (act === 'deploy') await run('deploy-debug');
+  else if (act === 'reload' || act === 'restart') {
+    await api('/api/jobs/input', { body: { id: p.session.id, data: act === 'reload' ? 'r' : 'R' } });
+    toast(act === 'reload' ? '⚡ Hot reload' : '↻ Hot restart');
+  } else if (act === 'quit' || act === 'cancel') {
+    await api('/api/jobs/stop', { body: { id: (p.session ?? p.job).id } });
+  } else if (act === 'stopApp') {
+    if (!p.packageId) throw new Error('Set the application id in Build & Run first');
+    const r = await api('/api/app', { body: { serial: needDevice(), pkg: p.packageId, action: 'stop' } });
+    if (!r.ok) throw new Error(r.output);
+    toast(`Stopped ${p.name}`);
+  }
+  btn.disabled = true;
+  setTimeout(refreshQuick, 300);
+}
+$('#quickBtns').onclick = (e) => {
+  const btn = e.target.closest('[data-quick]');
+  if (btn) busy(btn, () => quickAction(btn.dataset.quick, btn));
+};
+$('#quickProject').addEventListener('change', renderQuickBar);
+$('#quickAuto').onchange = (e) => {
+  const p = quickProject();
+  if (!p) return;
+  api('/api/projects/update', { body: { id: p.id, autoReload: e.target.checked } })
+    .then(() => toast(e.target.checked ? 'Auto reload on save: on' : 'Auto reload on save: off'), fail);
+};
+document.addEventListener('keydown', (e) => {
+  if (!e.altKey || e.key.toLowerCase() !== 'r') return;
+  const p = quickProject();
+  if (!p?.session) return;
+  e.preventDefault();
+  quickAction(e.shiftKey ? 'restart' : 'reload', $('#quickBtns')).catch(fail);
 });
+setInterval(refreshQuick, 2000);
 
 function renderProjects() {
   renderQuickProjects();
@@ -881,7 +935,6 @@ async function pollJob() {
     jobFrom = j.from + j.lines.length;
   }
   if (atBottom) pre.scrollTop = pre.scrollHeight;
-  updateQuick(j);
   $('#jobTitle').textContent = `${j.project} · ${j.task}${j.step && j.status === 'running' ? ` · ${j.step}` : ''}`;
   const st = $('#jobStatus');
   st.textContent = j.status;
@@ -1049,7 +1102,7 @@ async function wifiConnect(host, btn) {
     toast(`Connected to ${host}`);
     state.devSig = '';
     await loadDevices();
-api('/api/projects').then((d) => { projects = d.projects; renderQuickProjects(); }).catch(() => {});
+refreshQuick();
     renderWifiDevices();
   });
 }

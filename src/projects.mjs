@@ -1,11 +1,11 @@
 // Projects (Flutter / Gradle / React Native) and the job runner that builds and deploys them.
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, watch } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { ADB, adbArgs } from './adb.mjs';
+import { ADB, adbArgs, shell } from './adb.mjs';
 import { HttpError, onLines, splitArgs, stripAnsi } from './util.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -92,7 +92,15 @@ export function discoverProjects() {
 
 export const listProjects = () => config.projects.map(decorate);
 function decorate(p) {
-  return { ...p, running: [...jobs.values()].some((j) => j.projectId === p.id && j.status === 'running') };
+  const running = [...jobs.values()].filter((j) => j.projectId === p.id && j.status === 'running');
+  const live = running.find((j) => j.interactive);
+  return {
+    ...p,
+    autoReload: p.autoReload !== false,
+    running: running.length > 0,
+    job: running[0] ? { id: running[0].id, task: running[0].task, step: running[0].step } : null,
+    session: live ? { id: live.id, ready: Boolean(live.ready), reloads: live.reloads ?? 0 } : null,
+  };
 }
 
 export async function addProject(dir) {
@@ -118,6 +126,7 @@ export async function updateProject(id, patch) {
   if (typeof patch.buildArgs === 'string') p.buildArgs = patch.buildArgs;
   if (typeof patch.packageId === 'string') p.packageId = patch.packageId.trim();
   if (typeof patch.name === 'string' && patch.name.trim()) p.name = patch.name.trim();
+  if (typeof patch.autoReload === 'boolean') p.autoReload = patch.autoReload;
   await saveConfig();
   return p;
 }
@@ -137,9 +146,16 @@ function getProject(id) {
 
 const gradlew = (dir) => (process.platform === 'win32' ? path.join(dir, 'gradlew.bat') : path.join(dir, 'gradlew'));
 
-function buildCommand(p, mode) {
+// Flutter debug APKs are built for 3 CPU ABIs by default; building only the phone's is much faster.
+const FLUTTER_PLATFORM = { 'arm64-v8a': 'android-arm64', 'armeabi-v7a': 'android-arm', x86_64: 'android-x64' };
+
+function buildCommand(p, mode, abi) {
   const extra = splitArgs(p.buildArgs);
-  if (p.type === 'flutter') return { cmd: 'flutter', args: ['build', 'apk', `--${mode}`, ...extra], cwd: p.root };
+  if (p.type === 'flutter') {
+    const target = FLUTTER_PLATFORM[abi] && !extra.some((a) => a.startsWith('--target-platform'))
+      ? ['--target-platform', FLUTTER_PLATFORM[abi]] : [];
+    return { cmd: 'flutter', args: ['build', 'apk', `--${mode}`, ...target, ...extra], cwd: p.root };
+  }
   const task = mode === 'release' ? 'assembleRelease' : 'assembleDebug';
   return { cmd: gradlew(p.androidDir), args: [task, ...extra], cwd: p.androidDir };
 }
@@ -166,12 +182,12 @@ function findApk(p, mode) {
 }
 
 const TASKS = {
-  'deploy-debug': ['stop', 'build:debug', 'install:debug', 'launch'],
+  'deploy-debug': ['build:debug', 'install:debug', 'launch'],
   'build-debug': ['build:debug'],
   'build-release': ['build:release'],
   'install-debug': ['install:debug'],
   'install-release': ['install:release'],
-  'deploy-release': ['stop', 'build:release', 'install:release', 'launch'],
+  'deploy-release': ['build:release', 'install:release', 'launch'],
   launch: ['launch'],
   stop: ['stop'],
   run: ['run'],
@@ -189,7 +205,7 @@ export function listJobs() {
 }
 const summary = (j) => ({
   id: j.id, projectId: j.projectId, project: j.projectName, task: j.task, serial: j.serial,
-  status: j.status, step: j.step, startedAt: j.startedAt, endedAt: j.endedAt, interactive: j.interactive, lines: j.offset + j.log.length,
+  status: j.status, step: j.step, startedAt: j.startedAt, endedAt: j.endedAt, interactive: j.interactive, ready: Boolean(j.ready), lines: j.offset + j.log.length,
 });
 
 export function jobLog(id, from = 0) {
@@ -234,7 +250,30 @@ export function startJob(projectId, task, serial) {
   return summary(job);
 }
 
+// Hot-reload a running `flutter run` session whenever a .dart file under lib/ is saved.
+function watchForReload(job, p) {
+  let timer = null;
+  try {
+    return watch(path.join(p.root, 'lib'), { recursive: true }, (_ev, file) => {
+      if (!file?.endsWith('.dart')) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const project = config.projects.find((x) => x.id === p.id);
+        if (!job.ready || !job.proc?.stdin?.writable || project?.autoReload === false) return;
+        append(job, `⚡ ${file} saved — hot reload`);
+        job.reloads = (job.reloads ?? 0) + 1;
+        job.proc.stdin.write('r');
+      }, 350);
+    });
+  } catch (e) {
+    append(job, `(auto reload unavailable: ${e.message})`);
+    return null;
+  }
+}
+
 function append(job, line) {
+  // `flutter run` prints its key help once the app is up; from then on reloads work.
+  if (job.interactive && !job.ready && /hot reload|key commands/i.test(line)) job.ready = true;
   job.log.push(stripAnsi(line));
   if (job.log.length > MAX_LINES) {
     const drop = job.log.length - MAX_LINES;
@@ -278,7 +317,8 @@ async function runSteps(job, p, steps) {
     const [kind, mode] = step.split(':');
     let ok = true;
     if (kind === 'build') {
-      const { cmd, args, cwd } = buildCommand(p, mode);
+      const abi = job.serial ? (await shell(job.serial, 'getprop ro.product.cpu.abi')).stdout.trim() : '';
+      const { cmd, args, cwd } = buildCommand(p, mode, abi);
       ok = await runProc(job, cmd, args, cwd);
     } else if (kind === 'install') {
       const apk = findApk(p, mode);
@@ -297,7 +337,9 @@ async function runSteps(job, p, steps) {
         : await adb(['shell', 'am', 'force-stop', p.packageId]);
     } else if (kind === 'run') {
       if (p.type === 'flutter') {
+        const watcher = p.autoReload !== false ? watchForReload(job, p) : null;
         ok = await runProc(job, 'flutter', ['run', ...(job.serial ? ['-d', job.serial] : []), ...splitArgs(p.buildArgs)], p.root, { stdin: true });
+        watcher?.close();
       } else if (p.type === 'react-native') {
         ok = await runProc(job, 'npx', ['react-native', 'run-android', ...(job.serial ? ['--deviceId', job.serial] : [])], p.root);
       } else {

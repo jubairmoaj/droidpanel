@@ -37,8 +37,8 @@
     </div>
     <div class="app-bar" id="appBar">
       <select id="quickProject" title="App to rebuild" aria-label="App to rebuild"><option value="">No project — add one in Build &amp; Run</option></select>
-      <button id="quickRun" class="btn c-teal" title="Stop → build debug → install → launch"><i data-ic="rocket"></i><span>Rebuild &amp; run</span></button>
-      <button id="quickStop" class="btn c-red" title="Force-stop the app"><i data-ic="stop"></i><span>Stop</span></button>
+      <span id="quickBtns" class="app-btns"></span>
+      <label class="check small" id="quickAutoWrap" hidden title="Hot reload automatically when you save a .dart file"><input type="checkbox" id="quickAuto"> Auto reload on save</label>
       <span class="badge" id="quickStatus" hidden></span>
     </div>
     <div class="stage" id="stage">
