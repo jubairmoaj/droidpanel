@@ -861,10 +861,10 @@ $('#usbToWifi').onclick = (e) => busy(e.currentTarget, async () => {
   const serial = needDevice();
   const d = state.devices.find((x) => x.serial === serial);
   if (d?.transport === 'wifi') throw new Error('Selected device is already on Wi-Fi');
-  connectOut('Switching to TCP/IP…');
+  connectOut('Switching the phone to Wi-Fi debugging… (up to ~10 s)');
   const r = await api('/api/wireless/usb-to-wifi', { body: { serial } });
   connectOut(r.output);
-  if (!r.ok) throw new Error('Could not connect over Wi-Fi');
+  if (!r.ok) throw new Error('Could not connect over Wi-Fi — see the details in the dialog');
   toast('Connected over Wi-Fi — you can unplug the cable');
   state.devSig = '';
   loadDevices();

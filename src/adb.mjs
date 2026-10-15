@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -91,8 +92,26 @@ export async function pair(addr, code) {
   return { ok: /Successfully paired/i.test(text), output: text };
 }
 
+/** Quick TCP check so we can explain failures instead of waiting for adb's long timeout. */
+function reachable(hostPort, ms = 2500) {
+  const i = hostPort.lastIndexOf(':');
+  return new Promise((resolve) => {
+    const s = net.connect({ host: hostPort.slice(0, i).replace(/^\[|\]$/g, ''), port: Number(hostPort.slice(i + 1)) });
+    const done = (ok) => { s.destroy(); resolve(ok); };
+    s.setTimeout(ms, () => done(false));
+    s.once('connect', () => done(true));
+    s.once('error', () => done(false));
+  });
+}
+const unreachableHelp = (target) => `This PC cannot reach the phone at ${target}.\n` +
+  '• Make sure both are on the same Wi-Fi network (not mobile data / a guest network).\n' +
+  '• Many routers block device-to-device traffic ("AP isolation" / "client isolation") — turn it off in the router, ' +
+  'or use your phone\'s hotspot for the PC.\n• A VPN or firewall on either side can also block it.';
+
 export async function connect(addr) {
-  const r = await exec(ADB, ['connect', host(addr, 5555)], { timeout: 15000 });
+  const target = host(addr, 5555);
+  if (/^[\d.]+:\d+$/.test(target) && !(await reachable(target))) return { ok: false, output: unreachableHelp(target) };
+  const r = await exec(ADB, ['connect', target], { timeout: 15000 });
   const text = merged(r);
   return { ok: /connected to/i.test(text) && !/failed|unable/i.test(text), output: text };
 }
@@ -106,8 +125,12 @@ export async function usbToWifi(serial) {
   const ip = out(await shell(serial, 'ip -f inet addr show wlan0')).match(/inet ([\d.]+)/)?.[1];
   if (!ip) throw new HttpError(400, 'Device has no Wi-Fi IP — is it on the same network?');
   await adb(serial, ['tcpip', '5555']);
-  await sleep(1500);
-  return connect(`${ip}:5555`);
+  // adbd restarts in TCP mode; give it a few seconds to start listening.
+  for (let i = 0; i < 6; i++) {
+    await sleep(800);
+    if (await reachable(`${ip}:5555`, 1200)) return connect(`${ip}:5555`);
+  }
+  return { ok: false, output: unreachableHelp(`${ip}:5555`) };
 }
 
 export async function mdnsServices() {
