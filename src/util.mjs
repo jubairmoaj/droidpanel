@@ -6,9 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 /** Run a command and collect its output. Never rejects. */
-export function exec(cmd, args, { timeout = 15000, encoding = 'utf8', cwd } = {}) {
+export function exec(cmd, args, { timeout = 15000, encoding = 'utf8', cwd, env } = {}) {
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout, encoding, cwd, maxBuffer: 256 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout, encoding, cwd, env, maxBuffer: 256 * 1024 * 1024 }, (err, stdout, stderr) => {
       resolve({
         ok: !err,
         code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,

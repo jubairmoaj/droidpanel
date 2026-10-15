@@ -32,9 +32,11 @@ function frame(type, id, payload = Buffer.alloc(0)) {
   return Buffer.concat([h, payload]);
 }
 
-export function createRelay({ log = () => {} } = {}) {
+export function createRelay({ log = () => {}, external = null } = {}) {
   let bridge = null; // { ws, streams: Map<id, stream>, nextId }
-  let devices = []; // [{ serial, state, model, product, device, features }]
+  let browserDevices = []; // USB phones the browser owns: [{ serial, state, model, product, device, features }]
+  let externalDevices = []; // Wi-Fi phones owned by the helper's private adb server (see agent.mjs)
+  let devices = [];
   const trackers = new Set();
   const forwards = new Map(); // `tcp:<port>` -> { server, serial, local, remote }
 
@@ -66,21 +68,60 @@ export function createRelay({ log = () => {} } = {}) {
       bridge = null;
       for (const s of [...b.streams.values()]) s.end('browser disconnected');
       setDevices([]);
+      setExternal([]);
       log('browser disconnected');
     });
   }
 
+  function merge() {
+    const ids = new Set(browserDevices.map((d) => d.serial));
+    devices = [...browserDevices, ...externalDevices.filter((d) => !ids.has(d.serial))];
+    for (const t of trackers) t();
+  }
+
+  function setExternal(list) {
+    externalDevices = list.map((d) => ({ ...d, external: true, features: (d.features ?? []).filter((f) => !TRANSPORT_ONLY_FEATURES.has(f)) }));
+    merge();
+  }
+
   function setDevices(list) {
-    devices = list.map((d) => ({
+    browserDevices = list.map((d) => ({
       serial: String(d.serial), state: String(d.state ?? 'offline'), model: String(d.model ?? ''),
       product: String(d.product ?? ''), device: String(d.device ?? ''),
       features: (d.features ?? []).filter((f) => !TRANSPORT_ONLY_FEATURES.has(f)),
     }));
-    for (const t of trackers) t();
+    merge();
+  }
+
+  /** Stream to a Wi-Fi phone: straight to the private adb server, same shape as a bridge stream. */
+  async function openExternal(serial, service) {
+    const sock = await external.open(serial, service);
+    const s = {
+      opened: true, ended: false, held: [], endHeld: false, onData: null, onEnd: null,
+      deliver: (buf) => (s.onData ? s.onData(buf) : s.held.push(buf)),
+      attach: (onData, onEnd) => {
+        s.onData = onData;
+        s.onEnd = onEnd;
+        for (const b of s.held.splice(0)) onData(b);
+        if (s.endHeld) onEnd();
+      },
+      write: (buf) => sock.write(buf),
+      close: () => sock.destroy(),
+      end: () => {
+        if (s.ended) return;
+        s.ended = true;
+        if (s.onEnd) s.onEnd(); else s.endHeld = true;
+      },
+    };
+    sock.on('data', s.deliver);
+    sock.on('close', s.end);
+    sock.on('error', () => {});
+    return s;
   }
 
   /** Open a service on the phone through the browser. Resolves with a stream, rejects with adb's error text. */
   function openStream(serial, service) {
+    if (external && externalDevices.some((d) => d.serial === serial)) return openExternal(serial, service);
     const b = bridge;
     if (!b) return Promise.reject(new Error('no devices/emulators found'));
     const id = b.nextId++;
@@ -332,6 +373,7 @@ export function createRelay({ log = () => {} } = {}) {
   return {
     server,
     attachBridge,
+    setExternal,
     get connected() { return Boolean(bridge); },
     get devices() { return devices; },
   };

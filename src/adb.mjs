@@ -9,6 +9,13 @@ import * as D from '../shared/device.js';
 
 export const ADB = process.env.ADB || 'adb';
 
+// Wireless (pairing, connect, mDNS, device list) can run against a separate adb server: the PC
+// helper (src/agent.mjs) uses a private one with USB disabled, so it never takes the phone's USB
+// away from the browser. Unset (desktop mode) = the normal adb server.
+let wirelessEnv = null;
+export function useWirelessServer(env) { wirelessEnv = env; }
+const wexec = (args, opts) => exec(ADB, args, { ...opts, env: wirelessEnv ? { ...process.env, ...wirelessEnv } : undefined });
+
 export const adbArgs = (serial, args) => (serial ? ['-s', serial, ...args] : args);
 export const adb = (serial, args, opts) => exec(ADB, adbArgs(serial, args), opts);
 export const adbSpawn = (serial, args, opts) => spawn(ADB, adbArgs(serial, args), opts);
@@ -19,7 +26,7 @@ const out = (r) => (r.stdout ?? '').trim();
 // ── Devices ─────────────────────────────────────────────────────────────────
 
 export async function listDevices() {
-  const r = await exec(ADB, ['devices', '-l'], { timeout: 5000 });
+  const r = await wexec(['devices', '-l'], { timeout: 5000 });
   if (!r.ok && !r.stdout) return { adb: false, error: r.stderr || r.error, devices: [] };
   const devices = r.stdout
     .split('\n')
@@ -65,7 +72,7 @@ const merged = (r) => [r.stdout, r.stderr, r.error].map((s) => (s ?? '').toStrin
 
 export async function pair(addr, code) {
   if (!/^[\w-]{4,64}$/.test(String(code ?? ''))) throw new HttpError(400, 'Invalid pairing code');
-  const r = await exec(ADB, ['pair', host(addr), String(code)], { timeout: 20000 });
+  const r = await wexec(['pair', host(addr), String(code)], { timeout: 20000 });
   const text = merged(r);
   return { ok: /Successfully paired/i.test(text), output: text };
 }
@@ -89,13 +96,13 @@ const unreachableHelp = (target) => `This PC cannot reach the phone at ${target}
 export async function connect(addr) {
   const target = host(addr, 5555);
   if (/^[\d.]+:\d+$/.test(target) && !(await reachable(target))) return { ok: false, output: unreachableHelp(target) };
-  const r = await exec(ADB, ['connect', target], { timeout: 15000 });
+  const r = await wexec(['connect', target], { timeout: 15000 });
   const text = merged(r);
   return { ok: /connected to/i.test(text) && !/failed|unable/i.test(text), output: text };
 }
 
 export async function disconnect(serial) {
-  return { output: merged(await exec(ADB, serial ? ['disconnect', host(serial)] : ['disconnect'], { timeout: 5000 })) };
+  return { output: merged(await wexec(serial ? ['disconnect', host(serial)] : ['disconnect'], { timeout: 5000 })) };
 }
 
 /** Switch a USB-connected device to TCP/IP mode and connect to it over Wi-Fi. */
@@ -112,7 +119,7 @@ export async function usbToWifi(serial) {
 }
 
 export async function mdnsServices() {
-  const r = await exec(ADB, ['mdns', 'services'], { timeout: 5000 });
+  const r = await wexec(['mdns', 'services'], { timeout: 5000 });
   return out(r)
     .split('\n')
     .slice(1)

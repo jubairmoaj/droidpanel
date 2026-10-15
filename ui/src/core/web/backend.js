@@ -4,7 +4,7 @@
 import { Adb } from '../adb/adb.js';
 import { browserKey } from '../adb/rsa.js';
 import { ADB_FILTER, UsbTransport, findAdbInterface } from '../adb/webusb.js';
-import { TcpTransport } from '../adb/tcp.js';
+import { RemoteAdb } from './remote.js';
 import * as D from '../../../../shared/device.js';
 
 const dec = new TextDecoder();
@@ -128,9 +128,11 @@ export async function createBackend(env) {
     addEventListener('pagehide', () => devices.forEach((e) => e.adb?.close()));
   }
 
-  // ── Wi-Fi (adb tcpip mode, through the PC helper's TCP tunnel) ───────────
+  // ── Wi-Fi (through the PC helper's private adb server) ────────────────────
+  // A web page can't open TCP or do adb's TLS pairing, so Wi-Fi phones (QR / pairing code,
+  // Android 11+, or `adb tcpip`) are owned by the helper and reached through it (remote.js).
 
-  let agent = null; // set by useAgent(); a web page can't open TCP sockets itself
+  let agent = null; // set by useAgent()
   const WIFI_KEY = 'droidpanel.wifiHosts';
   const savedHosts = () => { try { return JSON.parse(localStorage.getItem(WIFI_KEY) ?? '[]'); } catch { return []; } };
   const saveHosts = (list) => { try { localStorage.setItem(WIFI_KEY, JSON.stringify([...new Set(list)].slice(-10))); } catch { /* private mode */ } };
@@ -139,55 +141,56 @@ export async function createBackend(env) {
     if (!agent?.connected) throw new HttpError('Wi-Fi debugging needs the PC helper — connect it in Build & Run first');
     return agent;
   }
+  const wifiApi = (path, opts) => needAgent().api(`/api/wifi${path}`, opts);
 
-  /** Connect to a phone listening on host:port (Wi-Fi debugging in tcpip mode). */
-  async function connectWifi(host, { quiet = false } = {}) {
-    const a = needAgent();
-    const target = String(host ?? '').trim().replace(/^(\d+\.\d+\.\d+\.\d+)$/, '$1:5555');
-    if (!/^\d+\.\d+\.\d+\.\d+:\d+$/.test(target)) throw new HttpError('Enter the phone\'s Wi-Fi IP, e.g. 192.168.1.20:5555');
-    const prev = devices.get(target);
-    if (prev?.adb && !prev.adb.closed) return { ok: true, output: `already connected to ${target}` };
-    const e = { serial: target, usb: null, adb: null, state: 'connecting', model: target, product: '', error: null, connecting: true, transport: 'wifi' };
-    devices.set(target, e);
-    changed();
-    try {
-      key ??= await browserKey();
-      const transport = await TcpTransport.open(a.tcpUrl(target));
-      e.adb = await Adb.connect(transport, key, {
-        onPrompt: () => { e.state = 'unauthorized'; changed(); },
-      });
-      Object.assign(e, { state: 'device', model: e.adb.model || target, product: e.adb.product, connecting: false });
-      saveHosts([...savedHosts(), target]);
-      log(`${target}: connected over Wi-Fi (${e.model})`);
-      e.adb.disconnected.then(() => {
-        if (devices.get(target) !== e) return;
-        stopMirror(target);
-        stopRecordingState(target);
-        e.adb = null;
-        e.state = 'offline';
-        log(`${target}: Wi-Fi connection lost`);
-        changed();
-      });
-      changed();
-      return { ok: true, output: `connected to ${target}` };
-    } catch (err) {
-      e.connecting = false;
-      if (quiet) devices.delete(target);
-      else { e.state = 'offline'; e.error = null; }
-      changed();
-      if (quiet) return { ok: false, output: err.message };
-      throw new HttpError(err.message);
+  /** Mirror the helper's Wi-Fi phones into the device list. */
+  async function syncWifi() {
+    if (!agent?.connected) return;
+    let list;
+    try { list = await agent.api('/api/wifi/devices'); } catch { return; }
+    let dirty = false;
+    const seen = new Set();
+    for (const d of list) {
+      seen.add(d.serial);
+      const e = devices.get(d.serial);
+      const ready = d.state === 'device';
+      if (e?.transport === 'wifi' && (e.state === (ready ? 'device' : d.state))) continue;
+      e?.adb?.close();
+      const entry = {
+        serial: d.serial, usb: null, transport: 'wifi', error: null, connecting: false,
+        state: ready ? 'device' : d.state, model: d.model || d.serial, product: d.product,
+        adb: ready ? new RemoteAdb(d, agent.adbUrl) : null,
+      };
+      devices.set(d.serial, entry);
+      if (ready) log(`${d.serial}: connected over Wi-Fi (${entry.model})`);
+      dirty = true;
     }
+    for (const [serial, e] of devices) {
+      if (e.transport !== 'wifi' || seen.has(serial)) continue;
+      stopMirror(serial);
+      stopRecordingState(serial);
+      e.adb?.close();
+      devices.delete(serial);
+      log(`${serial}: left Wi-Fi`);
+      dirty = true;
+    }
+    if (dirty) changed();
+  }
+  setInterval(syncWifi, 3000);
+
+  async function connectWifi(host) {
+    const target = String(host ?? '').trim().replace(/^(\d+\.\d+\.\d+\.\d+)$/, '$1:5555');
+    const r = await wifiApi('/connect', { body: { host: target } });
+    if (r.ok) saveHosts([...savedHosts(), target]);
+    await syncWifi();
+    return r;
   }
 
-  function disconnectWifi(serial) {
-    const e = devices.get(serial ?? '');
-    if (e?.transport !== 'wifi') throw new HttpError('Not a Wi-Fi device');
-    devices.delete(serial);
-    e.adb?.close();
+  async function disconnectWifi(serial) {
+    const r = await wifiApi('/disconnect', { body: { serial } });
     saveHosts(savedHosts().filter((h) => h !== serial));
-    changed();
-    return { ok: true, output: `disconnected ${serial}` };
+    await syncWifi();
+    return r;
   }
 
   /** Put a USB-connected phone into Wi-Fi debugging (adb tcpip 5555) and connect to it over Wi-Fi. */
@@ -196,24 +199,25 @@ export async function createBackend(env) {
     const adb = adbOf(serial);
     const ip = (await adb.shell('ip -f inet addr show wlan0')).stdout.match(/inet ([\d.]+)/)?.[1];
     if (!ip) throw new HttpError('The phone has no Wi-Fi address — connect it to the same Wi-Fi as this PC');
-    const s = await adb.open('tcpip:5555');
-    const reply = new TextDecoder().decode(await s.readAll()).trim();
-    log(`${serial}: ${reply || 'switched to tcpip 5555'}`);
+    const sock = await adb.open('tcpip:5555');
+    log(`${serial}: ${new TextDecoder().decode(await sock.readAll()).trim() || 'switched to tcpip 5555'}`);
     // adbd restarts in TCP mode (the USB link resets too); give it a moment to listen.
-    let last = '';
+    let last = { ok: false, output: '' };
     for (let i = 0; i < 8; i++) {
       await sleep(1000);
-      try { return await connectWifi(`${ip}:5555`); } catch (e) { last = e.message; }
+      last = await connectWifi(`${ip}:5555`);
+      if (last.ok) return last;
     }
-    return { ok: false, output: last };
+    return last;
   }
 
   /** Called by api.js once the PC helper exists; reconnects remembered Wi-Fi phones when it comes online. */
   function useAgent(a) {
     agent = a;
     a.onChange((on) => {
-      if (!on) return;
-      for (const h of savedHosts()) if (!devices.get(h)?.adb) connectWifi(h, { quiet: true }).catch(() => {});
+      if (!on) return syncWifi();
+      for (const h of savedHosts()) a.api('/api/wifi/connect', { body: { host: h } }).catch(() => {});
+      setTimeout(syncWifi, 1500);
     });
   }
 
@@ -523,13 +527,19 @@ export async function createBackend(env) {
 
   // Desktop-only features: answer harmlessly so the UI stays quiet.
   route('GET', '/api/reverse', () => []);
-  route('GET', '/api/wireless/mdns', () => []);
+  route('GET', '/api/wireless/mdns', () => (agent?.connected ? wifiApi('/mdns') : []));
+  route('POST', '/api/wireless/pair', (u, b) => wifiApi('/pair', { body: { host: b.host, code: b.code } }));
+  route('POST', '/api/wireless/qr', () => wifiApi('/qr', { body: {} }));
+  route('GET', '/api/wireless/qr', async () => {
+    const st = await wifiApi('/qr');
+    if (st.status === 'done') syncWifi();
+    return st;
+  });
   route('POST', '/api/wireless/connect', (u, b) => connectWifi(b.host));
   route('POST', '/api/wireless/disconnect', (u, b) => disconnectWifi(b.serial));
   route('POST', '/api/wireless/usb-to-wifi', (u, b) => usbToWifi(s(u, b)));
-  route('GET', '/api/wireless/saved', () => savedHosts());
-  for (const p of ['/api/reverse', '/api/wireless/pair', '/api/wireless/qr']) {
-    route('POST', p, notHere(p.includes('wireless') ? 'Pairing with a code or QR' : 'Port reverse'));
+  for (const p of ['/api/reverse']) {
+    route('POST', p, notHere('Port reverse'));
   }
 
   // ── Public surface used by api.js ─────────────────────────────────────────
@@ -570,7 +580,7 @@ export async function createBackend(env) {
     api,
     fetch: fetchApi,
     /** Devices as the PC helper's adb relay needs them. */
-    deviceList: () => [...devices.values()].map((e) => ({
+    deviceList: () => [...devices.values()].filter((e) => e.transport === 'usb').map((e) => ({
       serial: e.serial,
       state: e.state === 'device' ? 'device' : e.state === 'unauthorized' ? 'unauthorized' : 'offline',
       model: e.model,
