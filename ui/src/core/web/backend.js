@@ -4,7 +4,7 @@
 import { Adb } from '../adb/adb.js';
 import { browserKey } from '../adb/rsa.js';
 import { ADB_FILTER, UsbTransport, findAdbInterface } from '../adb/webusb.js';
-import * as D from '../shared/device.js';
+import * as D from '../../../../shared/device.js';
 
 const dec = new TextDecoder();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

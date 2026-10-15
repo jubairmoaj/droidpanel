@@ -1,11 +1,23 @@
 # Hosted mode (droidpanel --web): serves the UI only; browsers talk to their own phone over WebUSB.
-FROM node:22-alpine
 
+# 1) Build the React UI into dist/
+FROM node:22-alpine AS ui
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json vite.config.ts ./
+COPY ui ./ui
+COPY shared ./shared
+RUN npm run build
+
+# 2) Runtime: plain Node, no dependencies
+FROM node:22-alpine
 WORKDIR /app
 COPY package.json ./
 COPY bin ./bin
 COPY src ./src
-COPY public ./public
+COPY shared ./shared
+COPY --from=ui /src/dist ./dist
 
 # scrcpy-server is downloaded here on first start (checksum-verified) and kept across restarts.
 ENV DROIDPANEL_HOME=/data NODE_ENV=production

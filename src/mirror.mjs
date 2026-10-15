@@ -10,7 +10,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { adb, adbSpawn } from './adb.mjs';
 import { exec, onLines, sleep, which } from './util.mjs';
-import { SCRCPY_JAR, newScid, scrcpyArgs } from '../public/shared/device.js';
+import { SCRCPY_JAR, newScid, scrcpyArgs } from '../shared/device.js';
 
 const SERVER_CANDIDATES = [
   process.env.SCRCPY_SERVER,

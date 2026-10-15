@@ -2,7 +2,7 @@
 
 A lightweight web dashboard for Android app development. It runs on your PC, opens in your browser, and talks to your phone over **USB or Wi-Fi** using `adb`.
 
-- **Zero dependencies**: plain Node.js (≥ 20) and vanilla JS. No build step and no `node_modules`.
+- **No runtime dependencies**: the server is plain Node.js (≥ 20). The UI is React + TypeScript, built once with Vite into static files.
 - **Light on your PC**: the screen mirror sends the phone's H.264 stream straight to your browser, which decodes it with WebCodecs (usually GPU-accelerated). Node only relays bytes.
 - **Local only**: it binds to `127.0.0.1` and refuses requests from other websites (see [Security](#security)).
 - **Or hosted**: run it on a server with `--web` and use it from any computer with just a browser. The browser talks to the phone over USB itself, so nothing is installed or running on that computer (see [Hosted mode](#hosted-mode-vps)).
@@ -34,6 +34,7 @@ A lightweight web dashboard for Android app development. It runs on your PC, ope
 ```bash
 git clone https://github.com/jubairmoaj/droidpanel.git
 cd droidpanel
+npm install && npm run build     # builds the UI into dist/
 node bin/droidpanel.mjs          # opens http://localhost:4321
 ```
 
@@ -69,8 +70,9 @@ on the GPU, so the computer runs no adb, Node or scrcpy, and the server only ser
 | Mirror (live, with touch/keys/clipboard), screenshot, recording · Logcat · Network · Apps (launch/stop/clear/uninstall, APK download, drag-and-drop install) · Dev toggles · Deep links · Send text · Push files · Shell · Device info · **Build & Run with hot reload** (with the PC helper, below) | Port reverse · Wi-Fi pairing and connect |
 
 ```bash
-# on the server
+# on the server (or use the Dockerfile / docker-compose.yml, which build the UI for you)
 git clone https://github.com/jubairmoaj/droidpanel.git && cd droidpanel
+npm install && npm run build
 node bin/droidpanel.mjs --web --host 127.0.0.1 --port 4321
 ```
 
@@ -182,24 +184,26 @@ chooser and approving the key on the phone. The page is served with a strict Con
 ## Project layout
 
 ```
-bin/droidpanel.mjs   CLI entry: flags, start server, open browser
-src/server.mjs       HTTP routes, security guard, static files, logcat SSE
-src/adb.mjs          adb helpers: devices, wireless, toggles, apps, capture
-src/mirror.mjs       scrcpy-server session + control socket
-src/projects.mjs     project detection, saved config, build/run job runner
-src/ws.mjs           minimal WebSocket (server side)
-src/web.mjs          hosted mode (--web): static server + scrcpy-server download
-src/agent.mjs        PC helper for hosted Build & Run (droidpanel agent)
-src/relay.mjs        stand-in adb server that tunnels adb through the browser's WebUSB
-src/project-routes.mjs  Build & Run API shared by the server and the agent
-src/util.mjs         exec, body parsing, quoting, misc
-public/              the web UI (index.html, style.css, app.js, mirror.js, api.js)
-public/adb/          ADB protocol, RSA auth and WebUSB transport (hosted mode, no dependencies)
-public/web/          hosted-mode backend (same /api calls, in the browser) and the agent bridge
-public/shared/       device commands and parsers used by both modes
+bin/droidpanel.mjs      CLI: desktop server, --web (hosted), agent (PC helper)
+src/server.mjs          desktop mode: HTTP API over the local adb, static UI, logcat SSE
+src/adb.mjs, mirror.mjs adb helpers and scrcpy session (desktop mode)
+src/projects.mjs        project detection and the build/run job runner
+src/project-routes.mjs  Build & Run API, shared by the server and the agent
+src/web.mjs             hosted mode: static server + scrcpy-server download
+src/agent.mjs           PC helper for hosted Build & Run
+src/relay.mjs           stand-in adb server that tunnels adb through the browser's WebUSB
+shared/device.js        device commands and parsers used by both modes
+ui/                     the web UI (Vite root)
+  src/App.tsx           shell: top bar, device picker, tabs
+  src/DevicePane.tsx    mirror (fit-to-screen), controls, quick Build bar
+  src/tabs/*.tsx        Overview, Apps, Logcat, Network, Build & Run, Tools
+  src/core/             framework-free engine: ADB over WebUSB (adb/), hosted backend
+                        and agent bridge (web/), api.js, mirror.js
+dist/                   built UI (npm run build), served by both servers
 ```
 
-`npm run dev` restarts on file changes. `npm run check` syntax-checks every file.
+`npm run dev:ui` starts Vite with hot reload, proxying `/api` to a desktop `droidpanel` on :4321.
+`npm run check` syntax-checks the server and type-checks the UI.
 
 ## License
 

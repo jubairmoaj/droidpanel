@@ -5,14 +5,14 @@
 // scrcpy-server jar the browser pushes to the phone for mirroring.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { scrcpyInfo } from './mirror.mjs';
 
-const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist'); // built by `npm run build`
 const HOME = process.env.DROIDPANEL_HOME ?? path.join(os.homedir(), '.config', 'droidpanel');
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -63,28 +63,14 @@ export async function resolveScrcpy(log = console.log) {
   }
 }
 
-/** Short hash of everything in public/, so each deploy gets new asset URLs. */
-function contentHash() {
-  const h = createHash('sha256');
-  const walk = (dir) => {
-    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) walk(full);
-      else h.update(full.slice(PUBLIC.length)).update(readFileSync(full));
-    }
-  };
-  walk(PUBLIC);
-  return h.digest('hex').slice(0, 12);
-}
-
 export function createWebApp({ scrcpy }) {
   const env = JSON.stringify({ mode: 'web', scrcpy: { available: scrcpy.available, version: scrcpy.version ?? null } });
-  // CDNs such as Cloudflare override no-cache on .js/.css with hours of browser caching, which
-  // mixes old and new files after a deploy. So the page loads its assets from /v/<hash>/…
-  // (via <base>), which can then be cached forever; only the HTML is revalidated.
-  const version = contentHash();
-  const indexHtml = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8')
-    .replace('<head>', `<head>\n  <base href="/v/${version}/">`);
+  // Vite names assets by content hash (dist/assets/*), so they can be cached forever; the HTML is
+  // always revalidated. (CDNs like Cloudflare override no-cache on .js/.css with hours of caching,
+  // which would otherwise mix old and new files after a deploy.)
+  const indexFile = path.join(PUBLIC, 'index.html');
+  if (!existsSync(indexFile)) throw new Error('UI not built — run `npm install && npm run build` first');
+  const indexHtml = readFileSync(indexFile, 'utf8');
 
   function send(res, status, headers, body) {
     res.writeHead(status, { ...SECURITY_HEADERS, ...headers });
@@ -100,12 +86,7 @@ export function createWebApp({ scrcpy }) {
 
   return createServer((req, res) => {
     const u = new URL(req.url, 'http://localhost');
-    let immutable = false;
-    const v = /^\/v\/[0-9a-f]+(\/.*)$/.exec(u.pathname);
-    if (v) {
-      u.pathname = v[1]; // any version is served from the current files; the HTML always names the current one
-      immutable = true;
-    }
+    const immutable = u.pathname.startsWith('/assets/');
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { 'content-type': 'text/plain' }, 'Method not allowed');
     if (u.pathname === '/api/env') return send(res, 200, { 'content-type': 'application/json', 'cache-control': 'no-store' }, env);
     if (u.pathname.startsWith('/api/')) return send(res, 404, { 'content-type': 'application/json' }, '{"error":"Not available in hosted mode"}');

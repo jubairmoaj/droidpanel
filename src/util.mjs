@@ -78,8 +78,8 @@ export class HttpError extends Error {
   }
 }
 
-export { q, PKG_RE, intIn } from '../public/shared/device.js';
-import { PKG_RE } from '../public/shared/device.js';
+export { q, PKG_RE, intIn } from '../shared/device.js';
+import { PKG_RE } from '../shared/device.js';
 
 export const HOST_RE = /^[\w.\-:[\]%]+$/;
 

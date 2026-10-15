@@ -5,7 +5,7 @@ import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { exec, q, sleep, HttpError, HOST_RE, assertPkg, intIn } from './util.mjs';
-import * as D from '../public/shared/device.js';
+import * as D from '../shared/device.js';
 
 export const ADB = process.env.ADB || 'adb';
 

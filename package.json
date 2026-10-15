@@ -8,13 +8,17 @@
   },
   "scripts": {
     "start": "node bin/droidpanel.mjs",
-    "dev": "node --watch-path=src --watch-path=public bin/droidpanel.mjs --no-open",
-    "check": "node --check bin/droidpanel.mjs && for f in src/*.mjs public/*.js public/*/*.js; do node --check $f || exit 1; done"
+    "dev": "node --watch-path=src bin/droidpanel.mjs --no-open",
+    "dev:ui": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json",
+    "check": "node --check bin/droidpanel.mjs && for f in src/*.mjs shared/*.js ui/src/core/*.js ui/src/core/*/*.js; do node --check $f || exit 1; done && tsc -p tsconfig.json"
   },
   "files": [
     "bin",
     "src",
-    "public"
+    "shared",
+    "dist"
   ],
   "engines": {
     "node": ">=20"
@@ -28,5 +32,15 @@
     "developer-tools",
     "screen-mirror"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "lucide-react": "^1.57.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
 }

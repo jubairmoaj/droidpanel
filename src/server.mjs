@@ -10,10 +10,10 @@ import * as M from './mirror.mjs';
 import * as P from './projects.mjs';
 import { projectRoutes } from './project-routes.mjs';
 import { acceptWebSocket } from './ws.mjs';
-import { NET_LOGCAT_ARGS, logcatArgs, netAssembler } from '../public/shared/device.js';
+import { NET_LOGCAT_ARGS, logcatArgs, netAssembler } from '../shared/device.js';
 import { HttpError, bodyToTempFile, exec, json, onLines, readJson, which } from './util.mjs';
 
-const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist'); // built by `npm run build`
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
@@ -217,7 +217,10 @@ export function createApp({ port, host }) {
     const file = path.join(PUBLIC, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
     if (!file.startsWith(PUBLIC)) throw new HttpError(403, 'Forbidden');
     let st;
-    try { st = statSync(file); } catch { throw new HttpError(404, 'Not found'); }
+    try { st = statSync(file); } catch {
+      if (rel === '/index.html') throw new HttpError(503, 'UI not built — run `npm install && npm run build` in the droidpanel folder');
+      throw new HttpError(404, 'Not found');
+    }
     if (!st.isFile()) throw new HttpError(404, 'Not found');
     res.writeHead(200, {
       'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream',

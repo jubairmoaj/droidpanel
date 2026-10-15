@@ -28,10 +28,15 @@ function codecString(cfg) { // avc1.PPCCLL from the SPS NAL unit
 const i16fp = (f) => Math.max(-0x8000, Math.min(0x7fff, Math.round(Math.max(-1, Math.min(1, f)) * 0x8000)));
 
 export class Mirror {
-  constructor({ canvas, stage, onState, onStats, toast }) {
+  /**
+   * onState(state, message): 'connecting' | 'live' | 'off' | 'ended' | 'error'
+   * onFrameSize(w, h): the video size changed (first frame, rotation) — the UI fits the canvas.
+   */
+  constructor({ canvas, onState, onStats, onFrameSize, toast }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.stage = stage;
+    this.live = false;
+    this.onFrameSize = onFrameSize ?? (() => {});
     this.onState = onState;
     this.onStats = onStats;
     this.toast = toast;
@@ -81,7 +86,7 @@ export class Mirror {
     this.decoder = null;
     clearInterval(this.statsTimer);
     this.mode = null;
-    this.stage.classList.remove('live');
+    this.live = false;
     this.onState('off');
   }
 
@@ -95,10 +100,17 @@ export class Mirror {
   }
 
   showFrame() {
-    if (!this.stage.classList.contains('live')) {
-      this.stage.classList.add('live');
+    if (!this.live) {
+      this.live = true;
       this.onState('live');
     }
+  }
+
+  resize(w, h) {
+    if (this.canvas.width === w && this.canvas.height === h) return;
+    this.canvas.width = w;
+    this.canvas.height = h;
+    this.onFrameSize(w, h);
   }
 
   // ── Live mode ─────────────────────────────────────────────────────────────
@@ -158,10 +170,7 @@ export class Mirror {
       if (this.decoder && this.decoder.state !== 'closed') this.decoder.close();
       this.decoder = new VideoDecoder({
         output: (frame) => {
-          if (this.canvas.width !== frame.displayWidth || this.canvas.height !== frame.displayHeight) {
-            this.canvas.width = frame.displayWidth;
-            this.canvas.height = frame.displayHeight;
-          }
+          this.resize(frame.displayWidth, frame.displayHeight);
           this.ctx.drawImage(frame, 0, 0);
           frame.close();
           this.frames++;
@@ -208,10 +217,7 @@ export class Mirror {
         const res = await apiFetch(`/api/screenshot?serial=${encodeURIComponent(this.serial)}`, { signal });
         if (!res.ok) throw new Error((await res.json()).error);
         const bmp = await createImageBitmap(await res.blob(), { resizeWidth: 720, resizeQuality: 'medium' });
-        if (this.canvas.width !== bmp.width || this.canvas.height !== bmp.height) {
-          this.canvas.width = bmp.width;
-          this.canvas.height = bmp.height;
-        }
+        this.resize(bmp.width, bmp.height);
         this.ctx.drawImage(bmp, 0, 0);
         bmp.close();
         this.frames++;
