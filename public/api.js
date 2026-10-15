@@ -8,9 +8,13 @@ const env = await fetch('/api/env', { cache: 'no-store' })
 /** True in hosted mode: no local server, the browser talks to the phone itself. */
 export const WEB = env.mode === 'web';
 export const backend = WEB ? await import('./web/backend.js').then((m) => m.createBackend(env)) : null;
+/** Hosted mode only: the PC helper that runs Build & Run (see web/agent.js). */
+export const agent = backend ? (await import('./web/agent.js')).createAgent(backend) : null;
+const AGENT_PATHS = /^\/api\/(projects|jobs)(\/|\?|$)/;
 
 /** JSON API helper. POST when a body is given; throws Error(message) on failure. */
 export async function api(path, { body, method, raw, headers } = {}) {
+  if (agent && AGENT_PATHS.test(path)) return agent.api(path, { body, method });
   if (backend) return backend.api(path, { body, method });
   const init = { method: method ?? (body !== undefined ? 'POST' : 'GET'), headers: { 'x-droidpanel': '1', ...headers } };
   if (body !== undefined) {

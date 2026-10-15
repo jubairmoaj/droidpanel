@@ -66,7 +66,7 @@ on the GPU, so the computer runs no adb, Node or scrcpy, and the server only ser
 
 | Works in hosted mode | Desktop app only |
 |---|---|
-| Mirror (live, with touch/keys/clipboard), screenshot, recording · Logcat · Network · Apps (launch/stop/clear/uninstall, APK download, drag-and-drop install) · Dev toggles · Deep links · Send text · Push files · Shell · Device info | Build & Run / hot reload · Port reverse · Wi-Fi pairing and connect |
+| Mirror (live, with touch/keys/clipboard), screenshot, recording · Logcat · Network · Apps (launch/stop/clear/uninstall, APK download, drag-and-drop install) · Dev toggles · Deep links · Send text · Push files · Shell · Device info · **Build & Run with hot reload** (with the PC helper, below) | Port reverse · Wi-Fi pairing and connect |
 
 ```bash
 # on the server
@@ -106,6 +106,26 @@ WantedBy=multi-user.target
   in that browser's storage, and the phone reconnects automatically whenever it's plugged in.
 - Windows needs the phone's USB driver (Google USB Driver or the manufacturer's). macOS and Linux work as is, but
   on Linux your user must be able to access the device (if `adb devices` works without sudo, so does this).
+
+### Build & Run from the hosted panel (PC helper)
+
+Builds can't run inside a browser, so Build & Run uses a small helper on the PC where your code is:
+
+```bash
+npx -y github:jubairmoaj/droidpanel agent --origin https://panel.example.com
+# or, from a clone:  node bin/droidpanel.mjs agent --origin https://panel.example.com
+```
+
+Then open **Build & Run → Connect**, add your app with **Browse…** (opens your PC's folder picker), and use
+run / hot reload / rebuild / build debug or release / install / launch / stop as in the desktop app. Hot reload on
+save works too. The helper idles until you click a task; the build itself uses the PC's Flutter / Gradle as usual.
+
+How it reaches the phone: the browser owns the USB connection, so the helper starts a stand-in adb server
+(port 5038) and points Flutter and Gradle at it. Every adb command they run is tunnelled through the page's
+WebUSB connection, so the mirror and logcat keep working while you build. `adb reverse` isn't available this way.
+
+The helper only accepts requests from the `--origin` you give it, listens on `127.0.0.1` only, and checks the
+`Host` header. The browser may ask to let the site access apps on this device: allow it.
 
 ## Connecting a phone
 
@@ -169,10 +189,13 @@ src/mirror.mjs       scrcpy-server session + control socket
 src/projects.mjs     project detection, saved config, build/run job runner
 src/ws.mjs           minimal WebSocket (server side)
 src/web.mjs          hosted mode (--web): static server + scrcpy-server download
+src/agent.mjs        PC helper for hosted Build & Run (droidpanel agent)
+src/relay.mjs        stand-in adb server that tunnels adb through the browser's WebUSB
+src/project-routes.mjs  Build & Run API shared by the server and the agent
 src/util.mjs         exec, body parsing, quoting, misc
 public/              the web UI (index.html, style.css, app.js, mirror.js, api.js)
 public/adb/          ADB protocol, RSA auth and WebUSB transport (hosted mode, no dependencies)
-public/web/          hosted-mode backend: answers the same /api calls from the browser
+public/web/          hosted-mode backend (same /api calls, in the browser) and the agent bridge
 public/shared/       device commands and parsers used by both modes
 ```
 

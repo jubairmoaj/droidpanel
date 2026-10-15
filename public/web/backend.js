@@ -433,12 +433,10 @@ export async function createBackend(env) {
 
   // Desktop-only features: answer harmlessly so the UI stays quiet.
   route('GET', '/api/reverse', () => []);
-  route('GET', '/api/projects', () => ({ projects: [], jobs: [] }));
-  route('GET', '/api/projects/discover', () => []);
   route('GET', '/api/wireless/mdns', () => []);
   for (const p of ['/api/reverse', '/api/wireless/pair', '/api/wireless/connect', '/api/wireless/disconnect',
-    '/api/wireless/usb-to-wifi', '/api/wireless/qr', '/api/projects', '/api/projects/run']) {
-    route('POST', p, notHere(p.includes('wireless') ? 'Wi-Fi debugging' : p.includes('reverse') ? 'Port reverse' : 'Build & Run'));
+    '/api/wireless/usb-to-wifi', '/api/wireless/qr']) {
+    route('POST', p, notHere(p.includes('wireless') ? 'Wi-Fi debugging' : 'Port reverse'));
   }
 
   // ── Public surface used by api.js ─────────────────────────────────────────
@@ -478,6 +476,16 @@ export async function createBackend(env) {
   return {
     api,
     fetch: fetchApi,
+    /** Devices as the PC helper's adb relay needs them. */
+    deviceList: () => [...devices.values()].map((e) => ({
+      serial: e.serial,
+      state: e.state === 'device' ? 'device' : e.state === 'unauthorized' ? 'unauthorized' : 'offline',
+      model: e.model,
+      product: e.product,
+      device: e.adb?.banner.props['ro.product.device'] ?? '',
+      features: e.adb ? [...e.adb.banner.features] : [],
+    })),
+    adbFor: adbOf,
     events,
     control,
     requestDevice,

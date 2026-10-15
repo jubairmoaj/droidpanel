@@ -1,4 +1,4 @@
-import { WEB, api, apiEvents, apiFetch, backend } from './api.js';
+import { WEB, agent, api, apiEvents, apiFetch, backend } from './api.js';
 import { Mirror } from './mirror.js';
 import { ic, hydrateIcons, setBtn } from './icons.js';
 
@@ -744,6 +744,7 @@ const TASK_BUTTONS = (p) => [
 ];
 
 async function loadProjects() {
+  if (agent && !agent.connected) return; // hosted mode: needs the PC helper
   try {
     const data = await api('/api/projects');
     projects = data.projects;
@@ -801,6 +802,7 @@ function renderQuickBar() {
 }
 
 async function refreshQuick() {
+  if (agent && !agent.connected) return;
   try {
     const d = await api('/api/projects');
     projects = d.projects;
@@ -906,6 +908,15 @@ async function loadDiscovered() {
 
 const loadProjectsSoon = () => setTimeout(() => api('/api/projects').then((d) => { projects = d.projects; renderProjects(); }), 300);
 
+$('#projectBrowse').onclick = (e) => busy(e.currentTarget, async () => {
+  toast('Choose the folder in the window that opened on your PC');
+  const { path } = await api('/api/projects/pick', { body: {} });
+  if (!path) return;
+  const p = await api('/api/projects', { body: { path } });
+  toast(`Added ${p.name} (${p.type})`);
+  loadProjects();
+});
+
 $('#projectForm').onsubmit = (e) => {
   e.preventDefault();
   busy(e.submitter, async () => {
@@ -1007,6 +1018,30 @@ $('#shellCmd').onkeydown = (e) => {
 async function loadPanelLog() {
   const lines = await api('/api/log').catch(() => []);
   $('#panelLog').textContent = lines.join('\n') || '(empty)';
+}
+
+// ── PC helper (hosted mode) ─────────────────────────────────────────────────
+if (agent) {
+  const cmd = `npx -y github:jubairmoaj/droidpanel agent --origin ${location.origin}`;
+  $('#agentCmd').textContent = cmd;
+  $('#agentCopy').onclick = () => navigator.clipboard.writeText(cmd).then(() => toast('Command copied'), fail);
+  $('#agentConnect').onclick = (e) => busy(e.currentTarget, async () => {
+    agent.connect();
+    try {
+      await agent.status();
+    } catch (err) {
+      $('#agentHint').textContent = `${err.message}. If it is running, allow this site to access apps on this device `
+        + '(lock icon in the address bar → Site settings), then press Connect again.';
+      throw err;
+    }
+  });
+  agent.onChange((on) => {
+    document.body.classList.toggle('agent-on', on);
+    if (!on) return toast('PC helper disconnected', true);
+    toast('PC helper connected');
+    loadProjects();
+    refreshQuick();
+  });
 }
 
 // ── Connect dialog ──────────────────────────────────────────────────────────

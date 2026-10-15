@@ -8,6 +8,7 @@ import path from 'node:path';
 import * as A from './adb.mjs';
 import * as M from './mirror.mjs';
 import * as P from './projects.mjs';
+import { projectRoutes } from './project-routes.mjs';
 import { acceptWebSocket } from './ws.mjs';
 import { NET_LOGCAT_ARGS, logcatArgs, netAssembler } from '../public/shared/device.js';
 import { HttpError, bodyToTempFile, exec, json, onLines, readJson, which } from './util.mjs';
@@ -104,15 +105,7 @@ export function createApp({ port, host }) {
   route('POST', '/api/logcat/clear', async (u, b) => ({ ok: (await A.adb(serialOf(u, b), ['logcat', '-c'])).ok }));
 
   // ── Projects & jobs ──
-  route('GET', '/api/projects', () => ({ projects: P.listProjects(), jobs: P.listJobs() }));
-  route('POST', '/api/projects', (u, b) => P.addProject(String(b.path ?? '')));
-  route('GET', '/api/projects/discover', () => P.discoverProjects());
-  route('POST', '/api/projects/update', (u, b) => P.updateProject(b.id, b));
-  route('POST', '/api/projects/remove', async (u, b) => { await P.removeProject(b.id); return { ok: true }; });
-  route('POST', '/api/projects/run', (u, b) => P.startJob(b.id, b.task, b.serial));
-  route('GET', '/api/jobs/log', (u) => P.jobLog(u.searchParams.get('id'), Number(u.searchParams.get('from') ?? 0)));
-  route('POST', '/api/jobs/stop', (u, b) => { P.stopJob(b.id); return { ok: true }; });
-  route('POST', '/api/jobs/input', (u, b) => { P.jobInput(b.id, String(b.data ?? '')); return { ok: true }; });
+  projectRoutes(route);
 
   route('GET', '/api/log', () => serverLog.slice(-200));
   route('GET', '/api/env', async () => ({

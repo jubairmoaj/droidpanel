@@ -35,7 +35,7 @@
       <button id="shotSaveBtn" class="btn icon c-purple" title="Save screenshot as PNG" aria-label="Save screenshot"><i data-ic="download"></i></button>
       <button id="recBtn" class="btn c-red" title="Record screen (max 3 min)"><i data-ic="record"></i><span>Record</span></button>
     </div>
-    <div class="app-bar local-only" id="appBar">
+    <div class="app-bar needs-agent" id="appBar">
       <select id="quickProject" title="App to rebuild" aria-label="App to rebuild"><option value="">No project — add one in Build &amp; Run</option></select>
       <span id="quickBtns" class="app-btns"></span>
       <label class="check small" id="quickAutoWrap" hidden title="Hot reload automatically when you save a .dart file"><input type="checkbox" id="quickAuto"> Auto reload on save</label>
@@ -70,7 +70,7 @@
       <button role="tab" data-tab="apps"><i data-ic="package"></i>Apps</button>
       <button role="tab" data-tab="logcat"><i data-ic="logs"></i>Logcat</button>
       <button role="tab" data-tab="network"><i data-ic="globe"></i>Network</button>
-      <button role="tab" data-tab="build" class="local-only"><i data-ic="hammer"></i>Build &amp; Run</button>
+      <button role="tab" data-tab="build"><i data-ic="hammer"></i>Build &amp; Run</button>
       <button role="tab" data-tab="tools"><i data-ic="terminal"></i>Tools</button>
     </nav>
 
@@ -157,13 +157,26 @@ if (kDebugMode) dio.interceptors.add(DroidpanelNetLog());</pre>
 
     <!-- Build & Run -->
     <div class="panel" data-panel="build">
-      <form class="row" id="projectForm">
+      <div class="agent-setup web-only" id="agentSetup">
+        <h3><i data-ic="terminal"></i>Connect the PC helper</h3>
+        <p>Build, run, hot reload and stop run on <b>your PC</b> in the background. Start the small helper once in a
+          terminal (needs Node.js 20+ and Flutter/Android SDK, as for any build), then press <b>Connect</b>.</p>
+        <pre class="console" id="agentCmd"></pre>
+        <div class="row">
+          <button class="btn c-gray" id="agentCopy" type="button"><i data-ic="save"></i><span>Copy command</span></button>
+          <button class="btn primary" id="agentConnect" type="button"><i data-ic="link"></i><span>Connect</span></button>
+        </div>
+        <p class="muted small" id="agentHint">The helper only accepts this panel's address, listens on this PC only, and idles until you click a task.
+          Your browser may ask to allow access to apps on this device — allow it.</p>
+      </div>
+      <form class="row needs-agent" id="projectForm">
         <input id="projectPath" placeholder="Project folder, e.g. ~/code/my_app (Flutter, Gradle or React Native)" required>
+        <button class="btn c-gray" type="button" id="projectBrowse"><i data-ic="package"></i><span>Browse…</span></button>
         <button class="btn primary"><i data-ic="plus"></i><span>Add project</span></button>
       </form>
-      <div id="projects"></div>
-      <div id="discovered"></div>
-      <div class="job" id="jobBox" hidden>
+      <div id="projects" class="needs-agent"></div>
+      <div id="discovered" class="needs-agent"></div>
+      <div class="job needs-agent" id="jobBox" hidden>
         <div class="row">
           <b id="jobTitle"></b><span class="badge" id="jobStatus"></span>
           <span class="spacer"></span>

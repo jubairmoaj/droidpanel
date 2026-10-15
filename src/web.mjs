@@ -34,7 +34,9 @@ const SECURITY_HEADERS = {
   'permissions-policy': 'usb=(self), clipboard-read=(self), clipboard-write=(self)',
   'content-security-policy': [
     "default-src 'self'", "script-src 'self' https://cdn.jsdelivr.net", "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:", "media-src 'self' blob:", "connect-src 'self'", "frame-ancestors 'none'",
+    "img-src 'self' data: blob:", "media-src 'self' blob:",
+    // the PC helper (droidpanel agent) on this computer
+    "connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*", "frame-ancestors 'none'",
   ].join('; '),
 };
 
