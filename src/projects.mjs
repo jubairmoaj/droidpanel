@@ -57,6 +57,39 @@ export function detectProject(dir) {
   throw new HttpError(400, 'No Flutter (pubspec.yaml), React Native or Gradle project found in that folder');
 }
 
+// Scan common folders for app projects so the user can add them in one click.
+const SKIP_DIRS = new Set(['node_modules', 'build', '.dart_tool', '.gradle', 'Pods', 'ios', 'web', 'linux', 'macos', 'windows', 'Library', 'snap']);
+export function discoverProjects() {
+  const home = os.homedir();
+  const roots = ['Documents', 'Projects', 'projects', 'code', 'Code', 'dev', 'src', 'StudioProjects', 'AndroidStudioProjects', 'Desktop', 'workspace']
+    .map((d) => path.join(home, d)).filter((d) => existsSync(d));
+  const known = new Set(config.projects.map((p) => p.root));
+  const found = [];
+  const deadline = Date.now() + 3000;
+  const walk = (dir, depth) => {
+    if (found.length >= 60 || Date.now() > deadline) return;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    const names = new Set(entries.map((e) => e.name));
+    const isFlutterApp = names.has('pubspec.yaml') && names.has('android');
+    const isGradleApp = names.has('gradlew') && names.has('app') && !names.has('pubspec.yaml');
+    const isRnApp = names.has('package.json') && names.has('android') && readIf(path.join(dir, 'package.json')).includes('"react-native"');
+    if (isFlutterApp || isGradleApp || isRnApp) {
+      if (!known.has(dir)) {
+        try { found.push({ ...detectProject(dir), root: dir }); } catch { /* not a project after all */ }
+      }
+      return; // don't descend into a project
+    }
+    if (depth >= 4) return;
+    for (const e of entries) {
+      if (!e.isDirectory() || e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+      walk(path.join(dir, e.name), depth + 1);
+    }
+  };
+  roots.forEach((r) => walk(r, 0));
+  return found.map(({ name, type, root }) => ({ name, type, root }));
+}
+
 export const listProjects = () => config.projects.map(decorate);
 function decorate(p) {
   return { ...p, running: [...jobs.values()].some((j) => j.projectId === p.id && j.status === 'running') };

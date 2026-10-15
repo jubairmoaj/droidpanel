@@ -571,6 +571,7 @@ async function loadProjects() {
     const data = await api('/api/projects');
     projects = data.projects;
     renderProjects();
+    loadDiscovered();
     if (!currentJob && data.jobs[0]) currentJob = data.jobs[0].id;
     if (currentJob) followJob(currentJob, true);
   } catch (e) { fail(e); }
@@ -613,6 +614,20 @@ function renderProjects() {
     })));
   });
 }
+async function loadDiscovered() {
+  const box = $('#discovered');
+  if (!box.childElementCount) box.innerHTML = '<p class="muted small">Looking for projects on this PC…</p>';
+  const found = await api('/api/projects/discover').catch(() => []);
+  box.innerHTML = found.length ? `<h3>Found on this PC</h3>${found.map((p) => `
+    <div class="mdns-item"><span><b>${esc(p.name)}</b> <span class="badge">${esc(p.type)}</span><br><span class="muted small">${esc(p.root)}</span></span>
+    <button class="btn primary" data-add="${esc(p.root)}">＋ Add</button></div>`).join('')}` : '';
+  $$('[data-add]', box).forEach((b) => (b.onclick = () => busy(b, async () => {
+    const p = await api('/api/projects', { body: { path: b.dataset.add } });
+    toast(`Added ${p.name} (${p.type})`);
+    loadProjects();
+  })));
+}
+
 const loadProjectsSoon = () => setTimeout(() => api('/api/projects').then((d) => { projects = d.projects; renderProjects(); }), 300);
 
 $('#projectForm').onsubmit = (e) => {

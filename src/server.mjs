@@ -104,6 +104,7 @@ export function createApp({ port, host }) {
   // ── Projects & jobs ──
   route('GET', '/api/projects', () => ({ projects: P.listProjects(), jobs: P.listJobs() }));
   route('POST', '/api/projects', (u, b) => P.addProject(String(b.path ?? '')));
+  route('GET', '/api/projects/discover', () => P.discoverProjects());
   route('POST', '/api/projects/update', (u, b) => P.updateProject(b.id, b));
   route('POST', '/api/projects/remove', async (u, b) => { await P.removeProject(b.id); return { ok: true }; });
   route('POST', '/api/projects/run', (u, b) => P.startJob(b.id, b.task, b.serial));
