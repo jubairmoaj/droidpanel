@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node bin/droidpanel.mjs",
     "dev": "node --watch-path=src --watch-path=public bin/droidpanel.mjs --no-open",
-    "check": "node --check bin/droidpanel.mjs && for f in src/*.mjs public/*.js; do node --check $f || exit 1; done"
+    "check": "node --check bin/droidpanel.mjs && for f in src/*.mjs public/*.js public/*/*.js; do node --check $f || exit 1; done"
   },
   "files": [
     "bin",

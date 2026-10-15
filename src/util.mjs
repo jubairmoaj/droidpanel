@@ -78,20 +78,14 @@ export class HttpError extends Error {
   }
 }
 
-/** Single-quote a value for the Android (mksh) shell. */
-export const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+export { q, PKG_RE, intIn } from '../public/shared/device.js';
+import { PKG_RE } from '../public/shared/device.js';
 
-export const PKG_RE = /^[A-Za-z][\w]*(\.[A-Za-z_][\w]*)+$/;
 export const HOST_RE = /^[\w.\-:[\]%]+$/;
 
 export function assertPkg(pkg) {
   if (!PKG_RE.test(pkg ?? '')) throw new HttpError(400, 'Invalid package name');
   return pkg;
-}
-
-export function intIn(v, lo, hi, dflt) {
-  const n = Number.parseInt(v, 10);
-  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt;
 }
 
 /** Minimal shell-like argument splitter supporting "double" and 'single' quotes. */

@@ -214,3 +214,6 @@ dialog > .console { margin: 0 16px 16px; }
 .toast { background: var(--fg); color: var(--bg); padding: 10px 14px; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.2); max-width: 420px; white-space: pre-wrap; overflow-wrap: anywhere; animation: pop .15s ease-out; }
 .toast.err { background: var(--danger); color: #fff; }
 @keyframes pop { from { transform: translateY(6px); opacity: 0; } }
+
+/* Hosted (WebUSB) mode hides desktop-only features; the local server hides hosted-only bits. */
+body.web .local-only, body:not(.web) .web-only { display: none !important; }

@@ -1,0 +1,13 @@
+# Hosted mode. Put HTTPS in front of it (WebUSB requires https://) — e.g. a Dokploy/Traefik
+# domain pointing at port 4321, or Caddy. No host port is published on purpose.
+services:
+  droidpanel:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "4321"
+    volumes:
+      - droidpanel-data:/data
+
+volumes:
+  droidpanel-data:

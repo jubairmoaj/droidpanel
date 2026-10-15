@@ -5,6 +5,7 @@ import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { exec, q, sleep, HttpError, HOST_RE, assertPkg, intIn } from './util.mjs';
+import * as D from '../public/shared/device.js';
 
 export const ADB = process.env.ADB || 'adb';
 
@@ -39,39 +40,16 @@ export async function listDevices() {
 }
 
 export async function deviceInfo(serial) {
-  const props = await shell(serial, [
-    'getprop ro.product.manufacturer', 'getprop ro.product.model', 'getprop ro.build.version.release',
-    'getprop ro.build.version.sdk', 'getprop ro.product.cpu.abi', 'getprop ro.build.display.id',
-  ].join(';'));
-  const [manufacturer, model, android, sdk, abi, build] = out(props).split('\n').map((s) => s.trim());
-  const [size, density, battery, ip, df, uptime] = await Promise.all([
-    shell(serial, 'wm size'), shell(serial, 'wm density'), shell(serial, 'dumpsys battery'),
-    shell(serial, 'ip -f inet addr show wlan0'), shell(serial, 'df -h /data'), shell(serial, 'cat /proc/uptime'),
-  ]);
-  const last = (s) => [...out(s).matchAll(/(\d+x\d+|\d+)\s*$/gm)].at(-1)?.[1] ?? '';
-  const bat = out(battery);
-  const dfLine = out(df).split('\n').at(-1).trim().split(/\s+/);
-  const temp = Number(bat.match(/temperature: (\d+)/)?.[1]);
-  return {
-    manufacturer, model, android, sdk, abi, build,
-    screen: last(size), density: last(density),
-    battery: {
-      level: Number(bat.match(/level: (\d+)/)?.[1] ?? NaN),
-      charging: /(AC|USB|Wireless) powered: true/.test(bat),
-      temp: Number.isFinite(temp) ? temp / 10 : null,
-    },
-    ip: out(ip).match(/inet ([\d.]+)/)?.[1] ?? null,
-    storage: dfLine.length >= 5 ? { size: dfLine[1], used: dfLine[2], free: dfLine[3], pct: dfLine[4] } : null,
-    uptimeSec: Math.round(Number(out(uptime).split(' ')[0]) || 0),
-  };
+  const [props, ...rest] = await Promise.all([shell(serial, D.INFO_PROPS_CMD), ...D.INFO_CMDS.map((c) => shell(serial, c))]);
+  return D.parseInfo(out(props), rest.map(out));
 }
 
 let sizeCache = new Map(); // serial -> [w, h]
 export async function screenSize(serial) {
   if (!sizeCache.has(serial)) {
-    const m = [...out(await shell(serial, 'wm size')).matchAll(/(\d+)x(\d+)/g)].at(-1);
-    if (!m) return null;
-    sizeCache.set(serial, [Number(m[1]), Number(m[2])]);
+    const size = D.parseScreenSize(out(await shell(serial, 'wm size')));
+    if (!size) return null;
+    sizeCache.set(serial, size);
   }
   return sizeCache.get(serial);
 }
@@ -186,61 +164,10 @@ export const qrStatus = () => qrSession && { status: qrSession.status, message: 
 
 // ── Developer toggles ───────────────────────────────────────────────────────
 
-const REFRESH_PROPS = 'service call activity 1599295570 >/dev/null 2>&1';
-export const TOGGLES = {
-  show_taps: {
-    label: 'Show taps',
-    read: 'settings get system show_touches', on: (v) => v === '1',
-    set: (on) => `settings put system show_touches ${on ? 1 : 0}`,
-  },
-  pointer_location: {
-    label: 'Pointer location',
-    read: 'settings get system pointer_location', on: (v) => v === '1',
-    set: (on) => `settings put system pointer_location ${on ? 1 : 0}`,
-  },
-  layout_bounds: {
-    label: 'Layout bounds',
-    read: 'getprop debug.layout', on: (v) => v === 'true',
-    set: (on) => `setprop debug.layout ${on}; ${REFRESH_PROPS}`,
-  },
-  gpu_overdraw: {
-    label: 'GPU overdraw',
-    read: 'getprop debug.hwui.overdraw', on: (v) => v === 'show',
-    set: (on) => `setprop debug.hwui.overdraw ${on ? 'show' : 'false'}; ${REFRESH_PROPS}`,
-  },
-  no_animations: {
-    label: 'Animations off',
-    read: 'settings get global animator_duration_scale', on: (v) => v === '0' || v === '0.0',
-    set: (on) => ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']
-      .map((k) => `settings put global ${k} ${on ? 0 : 1}`).join(';'),
-  },
-  dark_mode: {
-    label: 'Dark mode',
-    read: 'cmd uimode night', on: (v) => /yes/i.test(v),
-    set: (on) => `cmd uimode night ${on ? 'yes' : 'no'}`,
-  },
-  large_font: {
-    label: 'Large font (1.3×)',
-    read: 'settings get system font_scale', on: (v) => Number(v) > 1.05,
-    set: (on) => `settings put system font_scale ${on ? '1.3' : '1.0'}`,
-  },
-  dont_keep_activities: {
-    label: "Don't keep activities",
-    read: 'settings get global always_finish_activities', on: (v) => v === '1',
-    set: (on) => `settings put global always_finish_activities ${on ? 1 : 0}`,
-  },
-  stay_awake: {
-    label: 'Stay awake while charging',
-    read: 'settings get global stay_on_while_plugged_in', on: (v) => Number(v) > 0,
-    set: (on) => `settings put global stay_on_while_plugged_in ${on ? 7 : 0}`,
-  },
-};
+export const { TOGGLES } = D;
 
 export async function readToggles(serial) {
-  const names = Object.keys(TOGGLES);
-  const r = await shell(serial, names.map((n) => `echo "@@$(${TOGGLES[n].read} 2>/dev/null)"`).join(';'));
-  const vals = out(r).split('\n').filter((l) => l.startsWith('@@')).map((l) => l.slice(2).trim());
-  return names.map((n, i) => ({ name: n, label: TOGGLES[n].label, on: vals[i] !== undefined && TOGGLES[n].on(vals[i]) }));
+  return D.parseToggles(out(await shell(serial, D.TOGGLES_READ_CMD)));
 }
 
 export async function setToggle(serial, name, on) {
@@ -294,43 +221,23 @@ export const recordingFile = (id) => recordedFiles.get(id);
 // ── Apps ────────────────────────────────────────────────────────────────────
 
 export async function listPackages(serial, all) {
-  const r = await shell(serial, `pm list packages ${all ? '' : '-3'}`);
-  return out(r).split('\n').map((l) => l.replace(/^package:/, '').trim()).filter(Boolean).sort();
+  return D.parsePackages(out(await shell(serial, D.listPackagesCmd(all))));
 }
 
 export async function appDetails(serial, pkg) {
   assertPkg(pkg);
-  const [dump, pid] = await Promise.all([
-    shell(serial, `dumpsys package ${pkg} | grep -E 'versionName|versionCode|firstInstallTime|lastUpdateTime|targetSdk' | head -8`),
-    shell(serial, `pidof ${pkg}`),
-  ]);
-  const d = out(dump);
-  return {
-    pkg,
-    versionName: d.match(/versionName=(\S+)/)?.[1] ?? null,
-    versionCode: d.match(/versionCode=(\d+)/)?.[1] ?? null,
-    targetSdk: d.match(/targetSdk=(\d+)/)?.[1] ?? null,
-    firstInstall: d.match(/firstInstallTime=(.+)/)?.[1]?.trim() ?? null,
-    lastUpdate: d.match(/lastUpdateTime=(.+)/)?.[1]?.trim() ?? null,
-    pids: out(pid).split(/\s+/).filter(Boolean),
-  };
+  const [dump, pid] = await Promise.all([shell(serial, D.appDumpCmd(pkg)), shell(serial, `pidof ${pkg}`)]);
+  return D.parseAppDetails(pkg, out(dump), out(pid));
 }
 
 export async function appAction(serial, pkg, action) {
   assertPkg(pkg);
-  const launch = `monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`;
-  const cmds = {
-    launch,
-    stop: `am force-stop ${pkg}`,
-    restart: `am force-stop ${pkg}; ${launch}`,
-    clear: `pm clear ${pkg}`,
-    info: `am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d package:${pkg}`,
-  };
+  const cmd = action === 'uninstall' ? null : D.appActionCmd(pkg, action);
   const r = action === 'uninstall' ? await adb(serial, ['uninstall', pkg], { timeout: 60000 })
-    : cmds[action] ? await shell(serial, cmds[action])
+    : cmd ? await shell(serial, cmd)
       : null;
   if (!r) throw new HttpError(400, 'Unknown action');
-  return { ok: r.ok && !/Failure|Error:|No activities found/i.test(merged(r)), output: merged(r) };
+  return { ok: r.ok && D.appActionOk(merged(r)), output: merged(r) };
 }
 
 export async function pullApk(serial, pkg) {
@@ -363,7 +270,7 @@ export async function pushFile(serial, file, name) {
 export async function openUrl(serial, url, pkg) {
   if (!url || /[\r\n]/.test(url)) throw new HttpError(400, 'Invalid URL');
   if (pkg) assertPkg(pkg);
-  const r = await shell(serial, `am start -W -a android.intent.action.VIEW -d ${q(url)}${pkg ? ` ${pkg}` : ''}`);
+  const r = await shell(serial, D.openUrlCmd(url, pkg));
   const text = merged(r);
   return { ok: r.ok && !/Error/.test(text), output: text };
 }
@@ -396,19 +303,6 @@ export async function runShell(serial, cmd) {
 }
 
 export async function inputEvent(serial, p) {
-  const num = (v, lo, hi) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : lo;
-  };
-  if (p.type === 'key') return shell(serial, `input keyevent ${intIn(p.code, 0, 999, 0)}`);
-  if (p.type === 'text') return shell(serial, `input text ${q(String(p.text ?? '').replace(/ /g, '%s'))}`);
-  const size = await screenSize(serial);
-  if (!size) return;
-  const [s, l] = [Math.min(...size), Math.max(...size)];
-  const [w, h] = p.land ? [l, s] : [s, l];
-  const px = (v, d) => Math.round(num(v, 0, 1) * d);
-  if (p.type === 'tap') return shell(serial, `input tap ${px(p.x, w)} ${px(p.y, h)}`);
-  if (p.type === 'swipe') {
-    return shell(serial, `input swipe ${px(p.x, w)} ${px(p.y, h)} ${px(p.x2, w)} ${px(p.y2, h)} ${Math.round(num(p.ms, 50, 5000))}`);
-  }
+  const cmd = D.inputCmd(p, p.type === 'tap' || p.type === 'swipe' ? await screenSize(serial) : null);
+  if (cmd) return shell(serial, cmd);
 }

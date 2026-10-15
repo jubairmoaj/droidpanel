@@ -1,8 +1,9 @@
-import { api } from './api.js';
+import { WEB, api, apiEvents, apiFetch, backend } from './api.js';
 import { Mirror } from './mirror.js';
 import { ic, hydrateIcons, setBtn } from './icons.js';
 
 hydrateIcons();
+if (WEB) document.body.classList.add('web');
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 const $ = (s, root = document) => root.querySelector(s);
@@ -29,6 +30,14 @@ async function busy(btn, fn) {
 }
 
 function download(url, name) {
+  if (WEB && url.startsWith('/api/')) { // hosted mode: the file comes from the phone via the browser
+    return apiFetch(url).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json()).error);
+      const blobUrl = URL.createObjectURL(await r.blob());
+      download(blobUrl, name);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }).catch(fail);
+  }
   const a = document.createElement('a');
   a.href = url;
   if (name) a.download = name;
@@ -38,6 +47,7 @@ function download(url, name) {
 }
 
 const state = { serial: store.get('serial', ''), devices: [], scrcpy: { available: false }, tab: store.get('tab', 'overview') };
+if (WEB && state.tab === 'build') state.tab = 'overview';
 const needDevice = () => {
   if (!state.serial) throw new Error('Select a device first');
   return state.serial;
@@ -93,7 +103,7 @@ async function loadDevices() {
   state.devicesLoaded = true;
   const sel = $('#deviceSelect');
   if (!data.adb) {
-    sel.innerHTML = '<option value="">adb not found — install Android platform-tools</option>';
+    sel.innerHTML = `<option value="">${esc(data.hint ?? 'adb not found — install Android platform-tools')}</option>`;
     return;
   }
   const ready = list.filter((d) => d.state === 'device');
@@ -107,6 +117,7 @@ async function loadDevices() {
   }
   const unauthorized = list.find((d) => d.state === 'unauthorized');
   if (unauthorized) toast(`${unauthorized.serial}: accept the "Allow USB debugging" prompt on the phone`);
+  for (const d of list) if (d.error) toast(`${d.model || d.serial}: ${d.error}`, true);
   renderWifiDevices();
   updateDot();
 }
@@ -175,7 +186,7 @@ async function copyScreenshot() {
   const serial = needDevice();
   const btn = $('#shotBtn');
   btn.disabled = true;
-  const blob = fetch(`/api/screenshot?serial=${encodeURIComponent(serial)}`).then(async (r) => {
+  const blob = apiFetch(`/api/screenshot?serial=${encodeURIComponent(serial)}`).then(async (r) => {
     if (!r.ok) throw new Error((await r.json()).error);
     return r.blob();
   });
@@ -237,7 +248,7 @@ $('#recBtn').onclick = (e) => busy(e.currentTarget, async () => {
     toast('Saving recording…');
     const r = await api('/api/record/stop', { body: { serial } });
     setRecUi(null);
-    download(r.file);
+    download(r.file, `recording-${new Date().toISOString().replace(/[:.]/g, '-')}.mp4`);
   } else {
     const r = await api('/api/record/start', { body: { serial } });
     setRecUi(r.startedAt);
@@ -506,7 +517,7 @@ function startLogcat() {
   pidSet = new Set();
   refreshPids().then(() => renderLog(true));
   pidTimer = setInterval(refreshPids, 2000);
-  logSource = new EventSource(`/api/logcat?serial=${encodeURIComponent(state.serial)}&tail=500`);
+  logSource = apiEvents(`/api/logcat?serial=${encodeURIComponent(state.serial)}&tail=500`);
   logSource.onmessage = (e) => {
     const added = JSON.parse(e.data).map(parseLine);
     logBuffer.push(...added);
@@ -514,7 +525,7 @@ function startLogcat() {
     if (!logPaused) renderLog(false, added);
   };
   logSource.addEventListener('end', () => { stopLogcat(); toast('Logcat ended'); });
-  logSource.onerror = () => { if (logSource?.readyState === EventSource.CLOSED) stopLogcat(); };
+  logSource.onerror = () => { if (logSource?.readyState === 2) stopLogcat(); }; // 2 = CLOSED
   setBtn($('#logToggle'), 'stop', 'Stop', 'c-red');
 }
 
@@ -574,7 +585,7 @@ function urlParts(u) {
 function startNet() {
   try { needDevice(); } catch (e) { return fail(e); }
   stopNet();
-  netSource = new EventSource(`/api/net?serial=${encodeURIComponent(state.serial)}`);
+  netSource = apiEvents(`/api/net?serial=${encodeURIComponent(state.serial)}`);
   netSource.onmessage = (e) => {
     for (const { phase, ...ev } of JSON.parse(e.data)) {
       let it = netItems.get(ev.id);
@@ -590,7 +601,7 @@ function startNet() {
     queueNetRender();
   };
   netSource.addEventListener('end', () => { stopNet(); toast('Network capture ended'); });
-  netSource.onerror = () => { if (netSource?.readyState === EventSource.CLOSED) stopNet(); };
+  netSource.onerror = () => { if (netSource?.readyState === 2) stopNet(); }; // 2 = CLOSED
   setBtn($('#netToggle'), 'stop', 'Stop', 'c-red');
 }
 
@@ -1010,8 +1021,29 @@ const connectOut = (text) => {
 
 $('#connectBtn').onclick = () => {
   dialog.showModal();
-  showCTab(store.get('ctab', 'usb'));
+  showCTab(WEB ? 'usb' : store.get('ctab', 'usb'));
 };
+
+// Hosted mode: pick the phone through the browser's USB chooser.
+$('#usbPick').onclick = (e) => busy(e.currentTarget, async () => {
+  connectOut('Connecting… if the phone asks "Allow USB debugging?", tap Allow (tick "Always allow").');
+  let serial;
+  try {
+    serial = await backend.requestDevice();
+  } catch (err) {
+    if (err.name === 'NotFoundError') return connectOut(''); // chooser cancelled
+    throw err;
+  }
+  state.devSig = '';
+  await loadDevices();
+  const d = state.devices.find((x) => x.serial === serial);
+  if (d?.state === 'device') {
+    connectOut('');
+    selectDevice(serial);
+    dialog.close();
+    toast(`Connected to ${d.model || serial}`);
+  } else connectOut(d?.error ?? 'Waiting for the phone… accept the prompt on its screen.');
+});
 dialog.addEventListener('close', () => {
   clearInterval(qrPoll);
   clearInterval(mdnsPoll);
@@ -1141,3 +1173,4 @@ showTab(state.tab, false);
 await loadDevices();
 if (!state.selectedOnce) selectDevice(state.serial);
 setInterval(loadDevices, 3000);
+backend?.onChange(() => { state.devSig = ''; loadDevices(); });

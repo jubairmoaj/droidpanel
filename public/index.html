@@ -35,7 +35,7 @@
       <button id="shotSaveBtn" class="btn icon c-purple" title="Save screenshot as PNG" aria-label="Save screenshot"><i data-ic="download"></i></button>
       <button id="recBtn" class="btn c-red" title="Record screen (max 3 min)"><i data-ic="record"></i><span>Record</span></button>
     </div>
-    <div class="app-bar" id="appBar">
+    <div class="app-bar local-only" id="appBar">
       <select id="quickProject" title="App to rebuild" aria-label="App to rebuild"><option value="">No project — add one in Build &amp; Run</option></select>
       <span id="quickBtns" class="app-btns"></span>
       <label class="check small" id="quickAutoWrap" hidden title="Hot reload automatically when you save a .dart file"><input type="checkbox" id="quickAuto"> Auto reload on save</label>
@@ -70,7 +70,7 @@
       <button role="tab" data-tab="apps"><i data-ic="package"></i>Apps</button>
       <button role="tab" data-tab="logcat"><i data-ic="logs"></i>Logcat</button>
       <button role="tab" data-tab="network"><i data-ic="globe"></i>Network</button>
-      <button role="tab" data-tab="build"><i data-ic="hammer"></i>Build &amp; Run</button>
+      <button role="tab" data-tab="build" class="local-only"><i data-ic="hammer"></i>Build &amp; Run</button>
       <button role="tab" data-tab="tools"><i data-ic="terminal"></i>Tools</button>
     </nav>
 
@@ -79,13 +79,13 @@
       <div class="info-grid" id="infoGrid"><p class="muted">No device selected.</p></div>
       <h3><i data-ic="sliders"></i>Developer toggles</h3>
       <div class="toggles" id="toggles"></div>
-      <h3><i data-ic="link"></i>Port reverse <span class="muted small">— phone's localhost:PORT → this PC</span></h3>
-      <form class="row" id="reverseForm">
+      <h3 class="local-only"><i data-ic="link"></i>Port reverse <span class="muted small">— phone's localhost:PORT → this PC</span></h3>
+      <form class="row local-only" id="reverseForm">
         <input id="revRemote" inputmode="numeric" placeholder="Phone port, e.g. 4000" required>
         <input id="revLocal" inputmode="numeric" placeholder="PC port (same)">
         <button class="btn c-blue"><i data-ic="plus"></i><span>Add</span></button>
       </form>
-      <div class="chips" id="reverseList"></div>
+      <div class="chips local-only" id="reverseList"></div>
     </div>
 
     <!-- Apps -->
@@ -207,7 +207,7 @@ if (kDebugMode) dio.interceptors.add(DroidpanelNetLog());</pre>
 <!-- ── Connect dialog ── -->
 <dialog id="connectDialog">
   <form method="dialog" class="dialog-head"><h2>Connect a device</h2><button class="btn icon c-gray" aria-label="Close"><i data-ic="x"></i></button></form>
-  <nav class="tabs small-tabs">
+  <nav class="tabs small-tabs local-only">
     <button data-ctab="usb" class="active"><i data-ic="usb"></i>USB</button>
     <button data-ctab="qr"><i data-ic="wifi"></i>QR code</button>
     <button data-ctab="code"><i data-ic="key"></i>Pairing code</button>
@@ -219,8 +219,17 @@ if (kDebugMode) dio.interceptors.add(DroidpanelNetLog());</pre>
       <li>Open <b>Developer options</b> and enable <b>USB debugging</b>.</li>
       <li>Plug in the cable and accept the <b>Allow USB debugging?</b> prompt.</li>
     </ol>
-    <p>Already on USB? Switch it to Wi-Fi so you can unplug the cable:</p>
-    <button class="btn primary" id="usbToWifi"><i data-ic="wifi"></i><span>Switch USB → Wi-Fi</span></button>
+    <div class="web-only">
+      <p>Then pick your phone in the browser's USB list:</p>
+      <button class="btn primary" id="usbPick"><i data-ic="usb"></i><span>Choose phone</span></button>
+      <p class="muted small">Works in Chrome, Edge or Brave on a computer. If it says the phone is busy, another program on
+        this computer is holding it — run <code>adb kill-server</code> and close Android Studio / scrcpy.
+        Next time the phone reconnects by itself when you plug it in.</p>
+    </div>
+    <div class="local-only">
+      <p>Already on USB? Switch it to Wi-Fi so you can unplug the cable:</p>
+      <button class="btn primary" id="usbToWifi"><i data-ic="wifi"></i><span>Switch USB → Wi-Fi</span></button>
+    </div>
   </div>
   <div class="cpanel" data-cpanel="qr">
     <p>Android 11+: on the phone open <b>Developer options → Wireless debugging → Pair device with QR code</b> and scan this. Phone and PC must be on the same Wi-Fi.</p>

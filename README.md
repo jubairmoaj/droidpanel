@@ -5,6 +5,7 @@ A lightweight web dashboard for Android app development. It runs on your PC, ope
 - **Zero dependencies**: plain Node.js (≥ 20) and vanilla JS. No build step and no `node_modules`.
 - **Light on your PC**: the screen mirror sends the phone's H.264 stream straight to your browser, which decodes it with WebCodecs (usually GPU-accelerated). Node only relays bytes.
 - **Local only**: it binds to `127.0.0.1` and refuses requests from other websites (see [Security](#security)).
+- **Or hosted**: run it on a server with `--web` and use it from any computer with just a browser. The browser talks to the phone over USB itself, so nothing is installed or running on that computer (see [Hosted mode](#hosted-mode-vps)).
 
 ## Features
 
@@ -56,6 +57,56 @@ droidpanel --port 4321 --no-open
 | `SCRCPY_VERSION` | Version of that server (needed only when the `scrcpy` binary isn't on `PATH`) |
 | `DROIDPANEL_HOME` | Where projects are saved (default `~/.config/droidpanel`) |
 
+## Hosted mode (VPS)
+
+`droidpanel --web` serves the dashboard from a server. Open the URL in Chrome, Edge or Brave on any computer,
+plug the phone into **that** computer, and click **Connect device → Choose phone**. The page speaks the ADB
+protocol to the phone over [WebUSB](https://developer.mozilla.org/docs/Web/API/WebUSB_API) and decodes the mirror
+on the GPU, so the computer runs no adb, Node or scrcpy, and the server only serves static files.
+
+| Works in hosted mode | Desktop app only |
+|---|---|
+| Mirror (live, with touch/keys/clipboard), screenshot, recording · Logcat · Network · Apps (launch/stop/clear/uninstall, APK download, drag-and-drop install) · Dev toggles · Deep links · Send text · Push files · Shell · Device info | Build & Run / hot reload · Port reverse · Wi-Fi pairing and connect |
+
+```bash
+# on the server
+git clone https://github.com/jubairmoaj/droidpanel.git && cd droidpanel
+node bin/droidpanel.mjs --web --host 127.0.0.1 --port 4321
+```
+
+On first start it downloads the pinned `scrcpy-server` (checksum-verified) into `~/.config/droidpanel`, unless
+scrcpy is installed or `SCRCPY_SERVER` + `SCRCPY_VERSION` are set.
+
+WebUSB only works on **HTTPS**, so put it behind a reverse proxy. With [Caddy](https://caddyserver.com) (automatic certificates):
+
+```
+panel.example.com {
+    reverse_proxy 127.0.0.1:4321
+}
+```
+
+To keep it running, a systemd unit such as:
+
+```ini
+# /etc/systemd/system/droidpanel.service
+[Service]
+ExecStart=/usr/bin/node /opt/droidpanel/bin/droidpanel.mjs --web --host 127.0.0.1 --port 4321
+Restart=always
+User=droidpanel
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**On the computer you open it from:**
+
+- Only one program can use the phone's USB debugging at a time. If the page says the phone is busy, stop the local
+  adb server (`adb kill-server`) and close Android Studio or scrcpy.
+- The first time, the phone asks **Allow USB debugging?** for the browser's key. Tick *Always allow*. The key is kept
+  in that browser's storage, and the phone reconnects automatically whenever it's plugged in.
+- Windows needs the phone's USB driver (Google USB Driver or the manufacturer's). macOS and Linux work as is, but
+  on Linux your user must be able to access the device (if `adb devices` works without sudo, so does this).
+
 ## Connecting a phone
 
 **USB**: enable *Developer options* (tap *Build number* 7 times), turn on *USB debugging*, plug in, and accept the prompt on the phone.
@@ -104,6 +155,10 @@ droidpanel can run shell commands on your phone and build tools on your PC, so i
 
 Don't expose it on a public network with `--host 0.0.0.0`.
 
+Hosted mode (`--web`) is different: the server has no adb and no API, only static files, so exposing it is safe.
+Each visitor can only reach the phone plugged into their own computer, after picking it in the browser's USB
+chooser and approving the key on the phone. The page is served with a strict Content-Security-Policy.
+
 ## Project layout
 
 ```
@@ -113,8 +168,12 @@ src/adb.mjs          adb helpers: devices, wireless, toggles, apps, capture
 src/mirror.mjs       scrcpy-server session + control socket
 src/projects.mjs     project detection, saved config, build/run job runner
 src/ws.mjs           minimal WebSocket (server side)
+src/web.mjs          hosted mode (--web): static server + scrcpy-server download
 src/util.mjs         exec, body parsing, quoting, misc
 public/              the web UI (index.html, style.css, app.js, mirror.js, api.js)
+public/adb/          ADB protocol, RSA auth and WebUSB transport (hosted mode, no dependencies)
+public/web/          hosted-mode backend: answers the same /api calls from the browser
+public/shared/       device commands and parsers used by both modes
 ```
 
 `npm run dev` restarts on file changes. `npm run check` syntax-checks every file.

@@ -9,7 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { adb, adbSpawn } from './adb.mjs';
-import { exec, onLines, sleep, intIn, which } from './util.mjs';
+import { exec, onLines, sleep, which } from './util.mjs';
+import { SCRCPY_JAR, newScid, scrcpyArgs } from '../public/shared/device.js';
 
 const SERVER_CANDIDATES = [
   process.env.SCRCPY_SERVER,
@@ -86,26 +87,18 @@ export async function streamMirror(serial, res, opts, log) {
     res.writeHead(501, { 'content-type': 'text/plain' }).end('scrcpy is not installed — using screenshot mode');
     return;
   }
-  const scid = Math.floor(Math.random() * 0x7fffffff).toString(16).padStart(8, '0');
+  const scid = newScid();
   const s = { serial, port: 27200 + Math.floor(Math.random() * 2000), clients: new Set(), log };
   sessions.set(serial, s);
   const alive = () => sessions.get(serial) === s;
   res.on('close', () => { if (alive()) stopMirror(serial, 'viewer disconnected'); });
 
-  const push = await adb(serial, ['push', info.server, '/data/local/tmp/scrcpy-server.jar'], { timeout: 20000 });
+  const push = await adb(serial, ['push', info.server, SCRCPY_JAR], { timeout: 20000 });
   if (!push.ok) return fail(res, `push failed: ${push.stderr}`);
   const fwd = await adb(serial, ['forward', `tcp:${s.port}`, `localabstract:scrcpy_${scid}`]);
   if (!fwd.ok) return fail(res, `forward failed: ${fwd.stderr}`);
 
-  const maxSize = intIn(opts.maxSize, 0, 4096, 1024);
-  const fps = intIn(opts.fps, 5, 120, 30);
-  const bitrate = intIn(opts.bitrate, 1, 50, 4);
-  s.proc = adbSpawn(serial, [
-    'shell', 'CLASSPATH=/data/local/tmp/scrcpy-server.jar', 'app_process', '/', 'com.genymobile.scrcpy.Server',
-    info.version, `scid=${scid}`, 'log_level=info', 'tunnel_forward=true', 'audio=false', 'control=true',
-    'cleanup=true', 'send_device_meta=false', 'video_codec=h264', `max_size=${maxSize}`, `max_fps=${fps}`,
-    `video_bit_rate=${bitrate * 1_000_000}`, 'clipboard_autosync=true',
-  ]);
+  s.proc = adbSpawn(serial, ['shell', ...scrcpyArgs(info.version, scid, opts)]);
   onLines(s.proc.stdout, (l) => l.trim() && log(`[mirror] ${l}`));
   onLines(s.proc.stderr, (l) => l.trim() && log(`[mirror] ${l}`));
   s.proc.on('close', (code) => { if (alive()) stopMirror(serial, `device server exited (${code})`); });

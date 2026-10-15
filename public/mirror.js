@@ -2,7 +2,7 @@
 //  • "live" mode: scrcpy H.264 stream → WebCodecs → <canvas>; input goes over a WebSocket
 //    as scrcpy control messages (real-time touch, keys, text, clipboard).
 //  • "lite" mode (no scrcpy or no WebCodecs): screenshots polled ~2×/s; input via adb.
-import { api } from './api.js';
+import { api, apiControl, apiFetch } from './api.js';
 
 // scrcpy control message types
 const MSG = { KEY: 0, TEXT: 1, TOUCH: 2, SCROLL: 3, BACK_OR_SCREEN_ON: 4, EXPAND_NOTIF: 5, COLLAPSE: 7, SET_CLIPBOARD: 9, ROTATE: 11 };
@@ -62,7 +62,7 @@ export class Mirror {
     const signal = this.abort.signal;
     try {
       const qs = new URLSearchParams({ serial, maxSize, fps, bitrate });
-      const res = await fetch(`/api/mirror?${qs}`, { signal });
+      const res = await apiFetch(`/api/mirror?${qs}`, { signal });
       if (!res.ok) throw new Error(await res.text());
       this.openControl(serial);
       await this.consume(res.body.getReader(), signal);
@@ -104,9 +104,7 @@ export class Mirror {
   // ── Live mode ─────────────────────────────────────────────────────────────
 
   openControl(serial) {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/api/mirror/control?serial=${encodeURIComponent(serial)}`);
-    ws.binaryType = 'arraybuffer';
+    const ws = apiControl(serial);
     ws.onmessage = (e) => {
       if (typeof e.data !== 'string') return;
       const msg = JSON.parse(e.data);
@@ -121,7 +119,7 @@ export class Mirror {
   }
 
   send(buf) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === 1) { // OPEN
       this.ws.send(buf);
       return true;
     }
@@ -207,7 +205,7 @@ export class Mirror {
     while (!signal.aborted) {
       const t = performance.now();
       try {
-        const res = await fetch(`/api/screenshot?serial=${encodeURIComponent(this.serial)}`, { signal });
+        const res = await apiFetch(`/api/screenshot?serial=${encodeURIComponent(this.serial)}`, { signal });
         if (!res.ok) throw new Error((await res.json()).error);
         const bmp = await createImageBitmap(await res.blob(), { resizeWidth: 720, resizeQuality: 'medium' });
         if (this.canvas.width !== bmp.width || this.canvas.height !== bmp.height) {

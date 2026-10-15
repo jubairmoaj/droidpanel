@@ -9,6 +9,7 @@ import * as A from './adb.mjs';
 import * as M from './mirror.mjs';
 import * as P from './projects.mjs';
 import { acceptWebSocket } from './ws.mjs';
+import { NET_LOGCAT_ARGS, logcatArgs, netAssembler } from '../public/shared/device.js';
 import { HttpError, bodyToTempFile, exec, json, onLines, readJson, which } from './util.mjs';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -179,7 +180,7 @@ export function createApp({ port, host }) {
     const tail = Math.min(5000, Math.max(0, Number(u.searchParams.get('tail') ?? 300) || 0));
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write(': ok\n\n');
-    const proc = A.adbSpawn(serial, ['logcat', '-v', 'threadtime', '-T', String(tail || 1)]);
+    const proc = A.adbSpawn(serial, logcatArgs(tail));
     let batch = [];
     onLines(proc.stdout, (l) => batch.push(l));
     onLines(proc.stderr, (l) => batch.push(`--- ${l}`));
@@ -194,33 +195,17 @@ export function createApp({ port, host }) {
     req.on('close', end);
   }
 
-  // Network inspector: apps print `DPNET|<key>|<i>|<n>|<json chunk>` lines to logcat
-  // (see public/snippets). We reassemble the chunks and stream complete events as SSE.
+  // Network inspector: apps print DPNET lines to logcat (see public/snippets); complete
+  // events are streamed as SSE.
   function streamNet(serial, req, res) {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write(': ok\n\n');
-    const proc = A.adbSpawn(serial, ['logcat', '-v', 'raw', '-T', '5000', 'flutter:V', 'DPNET:V', '*:S']);
-    const partial = new Map(); // key -> { n, parts, at }
+    const proc = A.adbSpawn(serial, NET_LOGCAT_ARGS);
+    const feed = netAssembler();
     let batch = [];
     onLines(proc.stdout, (line) => {
-      const at = line.indexOf('DPNET|');
-      if (at < 0) return;
-      const rest = line.slice(at + 6);
-      const p1 = rest.indexOf('|'), p2 = rest.indexOf('|', p1 + 1), p3 = rest.indexOf('|', p2 + 1);
-      if (p1 < 0 || p2 < 0 || p3 < 0) return;
-      const key = rest.slice(0, p1);
-      const i = Number(rest.slice(p1 + 1, p2)), n = Number(rest.slice(p2 + 1, p3));
-      if (!(n > 0 && n <= 2000 && i >= 0 && i < n)) return;
-      let e = partial.get(key);
-      if (!e || e.n !== n) partial.set(key, (e = { n, parts: new Array(n), got: 0, at: Date.now() }));
-      if (e.parts[i] === undefined) e.got++;
-      e.parts[i] = rest.slice(p3 + 1);
-      if (e.got < n) {
-        if (partial.size > 300) partial.delete(partial.keys().next().value); // drop the oldest broken one
-        return;
-      }
-      partial.delete(key);
-      try { batch.push(JSON.parse(e.parts.join(''))); } catch { /* corrupted line */ }
+      const e = feed(line);
+      if (e) batch.push(e);
     });
     const timer = setInterval(() => {
       if (!batch.length) return;

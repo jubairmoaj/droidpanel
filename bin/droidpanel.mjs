@@ -2,6 +2,7 @@
 import { spawn } from 'node:child_process';
 import { createApp, shutdown, log } from '../src/server.mjs';
 import { loadConfig } from '../src/projects.mjs';
+import { createWebApp, resolveScrcpy } from '../src/web.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (name) => argv.includes(`--${name}`);
@@ -14,6 +15,11 @@ if (flag('help') || flag('h')) {
   console.log(`droidpanel — web dashboard for Android development
 
 Usage: droidpanel [--port 4321] [--host 127.0.0.1] [--no-open]
+       droidpanel --web [--port 4321] [--host 0.0.0.0]
+
+  --web   Hosted mode for a server/VPS: serves the UI only. Each visitor's browser
+          talks to their own phone over WebUSB, so nothing runs on their computer.
+          Put it behind HTTPS (WebUSB requires it), e.g. Caddy or nginx.
 
 Environment:
   ADB=/path/to/adb            adb binary (default: adb on PATH)
@@ -23,17 +29,24 @@ Environment:
 }
 
 const port = Number(opt('port', process.env.PORT ?? 4321));
-const host = opt('host', '127.0.0.1');
+const web = flag('web');
+const host = opt('host', web ? '0.0.0.0' : '127.0.0.1');
 
-await loadConfig();
-const server = createApp({ port, host });
+let server;
+if (web) {
+  server = createWebApp({ scrcpy: await resolveScrcpy() });
+} else {
+  await loadConfig();
+  server = createApp({ port, host });
+}
 server.on('error', (e) => {
   console.error(e.code === 'EADDRINUSE' ? `Port ${port} is busy — try --port ${port + 1}` : e.message);
   process.exit(1);
 });
 server.listen(port, host, () => {
   const url = `http://localhost:${port}`;
-  console.log(`\n  droidpanel running → ${url}\n  Ctrl+C to stop\n`);
+  console.log(`\n  droidpanel ${web ? 'hosted mode ' : ''}running → ${url}\n  Ctrl+C to stop\n`);
+  if (web) return console.log(`  Listening on ${host}:${port}. Serve it over HTTPS — WebUSB only works on https:// (or localhost).\n`);
   log(`started on ${url}`);
   if (!flag('no-open')) {
     const [cmd, args] = process.platform === 'darwin' ? ['open', [url]]
